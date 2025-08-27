@@ -1,0 +1,1 @@
+{"event_id":"e-1","topic":"results.final","occurred_at":"2025-01-01T00:00:00Z","published_at":"2025-01-01T00:00:01Z","patient_ref":"Patient/123","resource_type":"Observation","resource":{"status":"final"},"provenance":{"source_system":"bridge","logic_id":"wrap-v1","inputs_span":"FHIR:Observation/obs-1","trace":null}}

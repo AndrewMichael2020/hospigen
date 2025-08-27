@@ -1,0 +1,15 @@
+topics:
+  - adt.admit
+  - adt.transfer
+  - adt.discharge
+  - orders.created
+  - results.prelim
+  - results.final
+  - meds.ordered
+  - meds.administered
+  - notes.created
+  - procedures.performed
+  - scheduling.created
+  - rpm.observation.created
+  - admin.policy_shock
+  - heartbeat

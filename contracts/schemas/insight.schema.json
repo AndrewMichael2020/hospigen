@@ -1,0 +1,22 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "title":"HospitalGen Insight",
+  "type":"object",
+  "required":["insight_id","insight_type","valid_from","provenance","payload"],
+  "properties":{
+    "insight_id":{"type":"string"},
+    "insight_type":{"type":"string"},
+    "valid_from":{"type":"string","format":"date-time"},
+    "valid_until":{"type":["string","null"],"format":"date-time"},
+    "provenance":{
+      "type":"object",
+      "required":["logic_id","inputs_span","last_refresh_ts"],
+      "properties":{
+        "logic_id":{"type":"string"},
+        "inputs_span":{"type":"string"},
+        "last_refresh_ts":{"type":"string","format":"date-time"}
+      }
+    },
+    "payload":{"type":"object"}
+  }
+}

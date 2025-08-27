@@ -1,0 +1,1 @@
+{"insight_id":"i-1","insight_type":"risk.score","valid_from":"2025-01-01T00:00:00Z","valid_until":null,"provenance":{"logic_id":"risk-v1","inputs_span":"bq:hospitalgen.events.2025-01-01","last_refresh_ts":"2025-01-01T00:05:00Z"},"payload":{"score":0.72}}

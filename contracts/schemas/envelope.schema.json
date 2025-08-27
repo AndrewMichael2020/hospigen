@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "HospitalGen Event Envelope",
+  "type": "object",
+  "required": ["event_id","topic","occurred_at","published_at","resource_type","resource","provenance"],
+  "properties": {
+    "event_id": {"type":"string"},
+    "topic": {"type":"string"},
+    "occurred_at": {"type":"string","format":"date-time"},
+    "published_at": {"type":"string","format":"date-time"},
+    "patient_ref": {"type":["string","null"]},
+    "resource_type": {"type":"string"},
+    "resource": {"type":"object"},
+    "provenance": {
+      "type":"object",
+      "required":["source_system","logic_id","inputs_span"],
+      "properties":{
+        "source_system":{"type":"string"},
+        "logic_id":{"type":"string"},
+        "inputs_span":{"type":"string"},
+        "trace":{"type":["object","null"]}
+      }
+    }
+  }
+}
