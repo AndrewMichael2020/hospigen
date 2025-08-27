@@ -1,0 +1,23 @@
+{
+  "type": "record",
+  "name": "HospitalGenEnvelope",
+  "namespace": "hospigen.v1",
+  "fields": [
+    {"name":"event_id","type":"string"},
+    {"name":"topic","type":"string"},
+    {"name":"occurred_at","type":"string"},
+    {"name":"published_at","type":"string"},
+    {"name":"patient_ref","type":["null","string"],"default":null},
+    {"name":"resource_type","type":"string"},
+    {"name":"resource","type":"string"},
+    {"name":"provenance","type":{
+      "type":"record","name":"Provenance",
+      "fields":[
+        {"name":"source_system","type":"string"},
+        {"name":"logic_id","type":"string"},
+        {"name":"inputs_span","type":"string"},
+        {"name":"trace","type":["null","string"],"default":null}
+      ]
+    }}
+  ]
+}

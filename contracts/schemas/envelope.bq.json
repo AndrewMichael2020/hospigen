@@ -1,0 +1,19 @@
+[
+  {"name":"event_id","type":"STRING"},
+  {"name":"topic","type":"STRING"},
+  {"name":"occurred_at","type":"STRING"},
+  {"name":"published_at","type":"STRING"},
+  {"name":"patient_ref","type":"STRING"},
+  {"name":"resource_type","type":"STRING"},
+  {"name":"resource","type":"STRING"},
+  {"name":"provenance","type":"RECORD","fields":[
+    {"name":"source_system","type":"STRING"},
+    {"name":"logic_id","type":"STRING"},
+    {"name":"inputs_span","type":"STRING"},
+    {"name":"trace","type":"STRING"}
+  ]},
+  {"name":"message_id","type":"STRING"},
+  {"name":"attributes","type":"STRING"},
+  {"name":"publish_time","type":"TIMESTAMP"},
+  {"name":"subscription_name","type":"STRING"}
+]
