@@ -14,6 +14,7 @@ class GenerateRequest(BaseModel):
     seed: Optional[int] = None
     dry_run: bool = False
     max_qps: float = 3.0
+    country: str = Field("CA", description="Country code: 'CA' or 'US'")
 
 @app.get("/healthz")
 async def health() -> dict:
@@ -32,6 +33,7 @@ async def generate(req: GenerateRequest):
         dry_run=req.dry_run,
         max_qps=req.max_qps,
         fhir_store=fhir_store,
+        country=req.country,
     )
     try:
         result = execute(cfg)
