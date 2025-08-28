@@ -259,9 +259,13 @@ async def pubsub_push(request: Request):
             return JSONResponse({"status": "error", "reason": "missing data"}, status_code=400)
         try:
             raw = base64.b64decode(body["message"]["data"]).decode("utf-8")
-            payload = json.loads(raw)
+            try:
+                payload = json.loads(raw)
+            except json.JSONDecodeError:
+                # FHIR store notifications send the resource name as a raw string.
+                payload = {"name": raw}
         except Exception as e:
-            return JSONResponse({"status": "error", "reason": f"base64/json decode failed: {e}"}, status_code=400)
+            return JSONResponse({"status": "error", "reason": f"payload processing failed: {e}"}, status_code=400)
     else:
         payload = body
 
