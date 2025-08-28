@@ -1,5 +1,4 @@
-fastapi>=0.111
-uvicorn[standard]>=0.29
-google-cloud-pubsub>=2.21
-google-auth>=2.32
-requests>=2.31
+fastapi
+uvicorn
+google-cloud-pubsub
+google-auth
