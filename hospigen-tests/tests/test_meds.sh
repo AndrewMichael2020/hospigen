@@ -3,6 +3,7 @@ set -euo pipefail
 source "$(dirname "$0")/_lib.sh"
 
 ensure_patient
+check_wiring
 ensure_topic "meds.ordered"
 ensure_topic "meds.administered"
 ensure_sub "meds.ordered.peek" "meds.ordered"

@@ -5,7 +5,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-bootstrap_gcp.sh — Install Google Cloud CLI, authenticate, set config, enable APIs, and wire Hospigen env.
+bootstrap_gcp.sh — Install Google Cloud CLI, authenticate, set config, enable APIs, set ADC quota project, and wire Hospigen env.
 
 Usage:
   bash scripts/bootstrap_gcp.sh [options]
@@ -15,6 +15,7 @@ Options:
   --account EMAIL         Google account email to authenticate (e.g., andriy.ignatov@gmail.com).
   --no-browser            Use device login (prints URL) instead of opening a browser.
   --adc                   Also perform Application Default Credentials login.
+  --set-adc-quota         Set ADC quota project to the selected project (recommended).
   --project PROJECT_ID    Set gcloud project. If omitted, you'll be prompted to choose.
   --region REGION         Set default run/region (default: northamerica-northeast1).
   --enable-apis           Enable required APIs (Healthcare, Pub/Sub, Run).
@@ -28,8 +29,9 @@ Options:
 Examples:
   bash scripts/bootstrap_gcp.sh \
     --install-cli \
-    --account user@gmail.com \
+  --account user@gmail.com \
     --adc \
+  --set-adc-quota \
     --project hospigen \
     --region northamerica-northeast1 \
     --enable-apis \
@@ -43,6 +45,16 @@ err() { echo "[bootstrap:ERROR] $*" >&2; }
 
 require_cmd() {
   command -v "$1" >/dev/null 2>&1 || { err "Missing required command: $1"; exit 1; }
+}
+
+# Temporarily allow prompts for gcloud even when --yes was used
+with_prompts() {
+  local old_prompt="${CLOUDSDK_CORE_DISABLE_PROMPTS-}"
+  if [[ -n "$old_prompt" ]]; then unset CLOUDSDK_CORE_DISABLE_PROMPTS; fi
+  "$@"
+  local rc=$?
+  if [[ -n "$old_prompt" ]]; then export CLOUDSDK_CORE_DISABLE_PROMPTS="$old_prompt"; fi
+  return $rc
 }
 
 on_debian_like() {
@@ -82,19 +94,31 @@ ensure_gcloud() {
 }
 
 gcloud_auth_login() {
+  # If a placeholder account was provided, stop early with a helpful error
+  if [[ -n "$account" && "$account" == *"<"*">"* ]]; then
+    err "Replace --account with your real Google email instead of $account"
+    exit 1
+  fi
+  # If already authenticated, skip unless a specific account was requested
+  local active_acct
+  active_acct="$(gcloud auth list --filter='status:ACTIVE' --format='value(account)' 2>/dev/null || true)"
+  if [[ -n "$active_acct" && -z "$account" ]]; then
+    log "Already authenticated as $active_acct"
+    return 0
+  fi
   local acct_flag=( )
   if [[ -n "$account" ]]; then acct_flag=("$account"); fi
   local browser_flag=( )
   if [[ "$do_no_browser" == true ]]; then browser_flag=("--no-launch-browser"); fi
   log "Starting gcloud auth login ${account:+for $account}"
-  gcloud auth login "${acct_flag[@]}" "${browser_flag[@]}"
+  with_prompts gcloud auth login "${acct_flag[@]}" "${browser_flag[@]}"
 }
 
 gcloud_adc_login() {
   local browser_flag=( )
   if [[ "$do_no_browser" == true ]]; then browser_flag=("--no-launch-browser"); fi
   log "Starting gcloud application-default login"
-  gcloud auth application-default login "${browser_flag[@]}"
+  with_prompts gcloud auth application-default login "${browser_flag[@]}"
 }
 
 set_config() {
@@ -145,6 +169,19 @@ choose_project() {
   fi
 }
 
+verify_project_access() {
+  local proj
+  proj="${project:-$(gcloud config get-value project 2>/dev/null)}"
+  if [[ -z "$proj" ]]; then
+    err "No project set to verify access."
+    return 1
+  fi
+  if ! gcloud projects describe "$proj" >/dev/null 2>&1; then
+    err "You do not have access to project [$proj] or it does not exist. Provide a valid --project or create one."
+    return 1
+  fi
+}
+
 enable_required_apis() {
   local proj
   proj="${project:-$(gcloud config get-value project 2>/dev/null)}"
@@ -155,6 +192,17 @@ enable_required_apis() {
     pubsub.googleapis.com \
     run.googleapis.com \
     --project "$proj"
+}
+
+set_adc_quota_project() {
+  local proj
+  proj="${project:-$(gcloud config get-value project 2>/dev/null)}"
+  if [[ -z "$proj" ]]; then err "No project set to configure ADC quota project"; return 1; fi
+  # Only attempt if ADC exists or user requested it
+  if [[ -f "$HOME/.config/gcloud/application_default_credentials.json" || "$do_set_adc_quota" == true || "$do_adc" == true ]]; then
+    log "Setting ADC quota project to $proj"
+    gcloud auth application-default set-quota-project "$proj" || true
+  fi
 }
 
 write_env_file() {
@@ -210,9 +258,10 @@ write_env=false
 wire_infra=false
 assume_yes=false
 do_print_summary=true
+do_set_adc_quota=false
 
 account=""
-project=""
+project="hospigen"
 region="northamerica-northeast1"
 
 while [[ $# -gt 0 ]]; do
@@ -221,6 +270,7 @@ while [[ $# -gt 0 ]]; do
     --account) account="${2:-}"; shift 2 ;;
     --no-browser) do_no_browser=true; shift ;;
     --adc) do_adc=true; shift ;;
+  --set-adc-quota) do_set_adc_quota=true; shift ;;
     --project) project="${2:-}"; shift 2 ;;
     --region) region="${2:-}"; shift 2 ;;
     --enable-apis) enable_apis=true; shift ;;
@@ -244,6 +294,21 @@ if [[ "$do_adc" == true ]]; then gcloud_adc_login || true; fi
 # 3) Project selection (prompt if missing), then config
 choose_project
 set_config
+if ! verify_project_access; then
+  if [[ "$assume_yes" == true ]]; then
+    err "Project [$project] is not accessible. Re-run with a valid --project or remove default project in the script."
+    exit 1
+  else
+    log "Project [$project] not accessible. Allowing you to choose an accessible project..."
+    project="" # reset to trigger selection
+    choose_project
+    set_config
+    verify_project_access || { err "Still no access to selected project. Exiting."; exit 1; }
+  fi
+fi
+
+# 3b) Set ADC quota project if requested or ADC exists
+if [[ "$do_set_adc_quota" == true || "$do_adc" == true ]]; then set_adc_quota_project || true; fi
 
 # 4) Enable APIs
 if [[ "$enable_apis" == true ]]; then enable_required_apis; fi

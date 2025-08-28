@@ -167,10 +167,12 @@ def choose_topic_for_observation(res: dict, action: t.Optional[str] = None) -> t
         ("http://loinc.org", "29463-7"),  # Weight
         ("http://loinc.org", "39156-5"),  # BMI
     }
+    is_loinc = any((s or '').lower() == 'http://loinc.org' for (s, _) in codes)
+    is_known_vitals = len(codes & VITALS) > 0
 
-    if is_lab:
+    if is_lab or (is_loinc and not is_known_vitals):
         return RESULTS_FINAL_TOPIC if status == "final" else RESULTS_PRELIM_TOPIC
-    if is_vitals or (codes & VITALS):
+    if is_vitals or is_known_vitals:
         return RPM_OBS_CREATED_TOPIC
     return None
 

@@ -6,23 +6,62 @@ BACKUP_SUFFIX="$(date +%Y%m%d-%H%M%S)"
 
 usage() {
   cat <<'EOF'
-fill_env.sh — generate or update .env for Hospigen (pre‑Synthea)
+fill_env.sh — generate or update .env for Hospigen
 
 Usage:
-  bash scripts/fill_env.sh [--yes]
+  bash scripts/fill_env.sh [options]
 
 Options:
-  --yes      Non-interactive. Accept detected defaults where possible.
-             You can still override by exporting env vars before running.
+  --yes                   Non-interactive. Accept defaults where possible.
+  --offline|--minimal     Do not use gcloud; skip all API queries and use provided or safe defaults.
+  --project ID            GCP project ID.
+  --region REGION         GCP region (default: northamerica-northeast1).
+  --dataset ID            Healthcare dataset ID.
+  --store ID              FHIR store ID.
+  --bridge-service NAME   Cloud Run Bridge service name.
+  --bridge-url URL        Bridge service HTTPS URL.
+  --push-sa EMAIL         Pub/Sub push service account email.
+  --help                  Show help.
 
-Environment overrides (optional):
+Also supports environment overrides:
   PROJECT_ID, REGION, DATASET_ID, STORE_ID, BRIDGE_SERVICE, BRIDGE_URL, PUSH_SA
 EOF
 }
 
 non_interactive="false"
-if [[ "${1:-}" == "--help" ]]; then usage; exit 0; fi
-if [[ "${1:-}" == "--yes" ]]; then non_interactive="true"; fi
+offline_mode="false"
+
+# CLI overrides (initialized from env if present)
+# Capture explicit environment overrides BEFORE reading existing .env
+PROJECT_ID_OVR="${PROJECT_ID:-}"
+REGION_OVR="${REGION:-}"
+DATASET_ID_OVR="${DATASET_ID:-}"
+STORE_ID_OVR="${STORE_ID:-}"
+BRIDGE_SERVICE_OVR="${BRIDGE_SERVICE:-}"
+BRIDGE_URL_OVR="${BRIDGE_URL:-}"
+PUSH_SA_OVR="${PUSH_SA:-}"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --help|-h) usage; exit 0 ;;
+    --yes) non_interactive="true"; shift ;;
+    --offline|--minimal) offline_mode="true"; shift ;;
+    --project) PROJECT_ID_OVR="${2:-}"; shift 2 ;;
+    --region) REGION_OVR="${2:-}"; shift 2 ;;
+    --dataset) DATASET_ID_OVR="${2:-}"; shift 2 ;;
+    --store) STORE_ID_OVR="${2:-}"; shift 2 ;;
+    --bridge-service) BRIDGE_SERVICE_OVR="${2:-}"; shift 2 ;;
+    --bridge-url) BRIDGE_URL_OVR="${2:-}"; shift 2 ;;
+    --push-sa) PUSH_SA_OVR="${2:-}"; shift 2 ;;
+    *) echo "Unknown option: $1" >&2; usage; exit 1 ;;
+  esac
+done
+
+# Now load existing .env for defaults (not as overrides)
+if [[ -f "$ENV_FILE" ]]; then
+  # shellcheck disable=SC1090
+  source "$ENV_FILE"
+fi
 
 # Helpers
 prompt() {
@@ -61,25 +100,41 @@ require_cmd() {
   command -v "$1" >/dev/null 2>&1 || { echo "Missing required command: $1" >&2; exit 1; }
 }
 
-require_cmd gcloud
+gcloud_available() {
+  command -v gcloud >/dev/null 2>&1
+}
+
+# Only require gcloud if not in offline mode
+if [[ "$offline_mode" != "true" ]]; then
+  if ! gcloud_available; then
+    echo "gcloud is not available; falling back to offline mode." >&2
+    offline_mode="true"
+  fi
+fi
 
 # 1) Detect PROJECT_ID and REGION
-detect_project="$(gcloud config get-value project 2>/dev/null || true)"
-detect_region="$(gcloud config get-value run/region 2>/dev/null || true)"
-default_project="${PROJECT_ID:-${detect_project:-hospigen}}"
-default_region="${REGION:-${detect_region:-northamerica-northeast1}}"
+detect_project=""
+detect_region=""
+if [[ "$offline_mode" != "true" ]] && gcloud_available; then
+  detect_project="$(gcloud config get-value project 2>/dev/null || true)"
+  detect_region="$(gcloud config get-value run/region 2>/dev/null || true)"
+fi
+default_project="${PROJECT_ID_OVR:-${detect_project:-hospigen}}"
+default_region="${REGION_OVR:-${detect_region:-northamerica-northeast1}}"
 
 prompt PROJECT_ID "GCP Project ID" "$default_project"
 prompt REGION "Region for resources" "$default_region"
 
 # 2) Datasets in region
 dataset_choices=()
-while IFS= read -r line; do
-  [[ -z "$line" ]] && continue
-  # Expect full path: projects/<p>/locations/<r>/datasets/<id>
-  ds_id="${line##*/}"
-  dataset_choices+=("$ds_id|$line")
-done < <(gcloud healthcare datasets list --location="$REGION" --project="$PROJECT_ID" --format="value(name)" 2>/dev/null || true)
+if [[ "$offline_mode" != "true" ]] && gcloud_available; then
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    # Expect full path: projects/<p>/locations/<r>/datasets/<id>
+    ds_id="${line##*/}"
+    dataset_choices+=("$ds_id|$line")
+  done < <(gcloud healthcare datasets list --location="$REGION" --project="$PROJECT_ID" --format="value(name)" 2>/dev/null || true)
+fi
 
 select_from_list() {
   local var="$1"; local title="$2"; shift 2
@@ -124,38 +179,67 @@ select_from_list() {
   fi
 }
 
-if [[ -z "${DATASET_ID:-}" ]]; then
+if [[ -z "${DATASET_ID_OVR}" && -z "${DATASET_ID:-}" ]]; then
   if ! select_from_list DATASET_ID "Healthcare Dataset" "${dataset_choices[@]}"; then
-    prompt DATASET_ID "Enter Healthcare Dataset ID" ""
+    # Use override if provided, else choose sensible default in non-interactive/offline
+    if [[ -n "$DATASET_ID_OVR" ]]; then
+      DATASET_ID="$DATASET_ID_OVR"
+    else
+      def_ds="hospigen"
+      if [[ "$non_interactive" == "true" ]]; then
+        DATASET_ID="$def_ds"
+        echo "Using default dataset ID: $DATASET_ID"
+      else
+        prompt DATASET_ID "Enter Healthcare Dataset ID" "$def_ds"
+      fi
+    fi
     export DATASET_ID_PATH="projects/${PROJECT_ID}/locations/${REGION}/datasets/${DATASET_ID}"
   fi
+else
+  DATASET_ID="${DATASET_ID_OVR:-${DATASET_ID}}"
+  export DATASET_ID_PATH="projects/${PROJECT_ID}/locations/${REGION}/datasets/${DATASET_ID}"
 fi
 
 # 3) FHIR stores in dataset
 fhir_choices=()
-while IFS= read -r line; do
-  [[ -z "$line" ]] && continue
-  fs_id="${line##*/}"
-  fhir_choices+=("$fs_id|$line")
-done < <(gcloud healthcare fhir-stores list --dataset="${DATASET_ID_PATH}" --location="$REGION" --format="value(name)" 2>/dev/null || true)
+if [[ "$offline_mode" != "true" ]] && gcloud_available; then
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    fs_id="${line##*/}"
+    fhir_choices+=("$fs_id|$line")
+  done < <(gcloud healthcare fhir-stores list --dataset="${DATASET_ID_PATH}" --location="$REGION" --format="value(name)" 2>/dev/null || true)
+fi
 
-if [[ -z "${STORE_ID:-}" ]]; then
+if [[ -z "${STORE_ID_OVR}" && -z "${STORE_ID:-}" ]]; then
   if ! select_from_list STORE_ID "FHIR Store" "${fhir_choices[@]}"; then
-    prompt STORE_ID "Enter FHIR Store ID" ""
-    export STORE_ID_PATH="${DATASET_ID_PATH}/fhirStores/${STORE_ID}"
-  else
-    export STORE_ID_PATH="${DATASET_ID_PATH}/fhirStores/${STORE_ID}"
+    if [[ -n "$STORE_ID_OVR" ]]; then
+      STORE_ID="$STORE_ID_OVR"
+    else
+      def_store="hospigen-fhir"
+      if [[ "$non_interactive" == "true" ]]; then
+        STORE_ID="$def_store"
+        echo "Using default FHIR store ID: $STORE_ID"
+      else
+        prompt STORE_ID "Enter FHIR Store ID" "$def_store"
+      fi
+    fi
   fi
+  export STORE_ID_PATH="${DATASET_ID_PATH}/fhirStores/${STORE_ID}"
+else
+  STORE_ID="${STORE_ID_OVR:-${STORE_ID}}"
+  export STORE_ID_PATH="${DATASET_ID_PATH}/fhirStores/${STORE_ID}"
 fi
 
 # 4) Cloud Run Bridge service
 run_services=()
-while IFS= read -r svc; do
-  [[ -z "$svc" ]] && continue
-  run_services+=("$svc")
-done < <(gcloud run services list --region="$REGION" --project="$PROJECT_ID" --format="value(name)" 2>/dev/null || true)
+if [[ "$offline_mode" != "true" ]] && gcloud_available; then
+  while IFS= read -r svc; do
+    [[ -z "$svc" ]] && continue
+    run_services+=("$svc")
+  done < <(gcloud run services list --region="$REGION" --project="$PROJECT_ID" --format="value(name)" 2>/dev/null || true)
+fi
 
-detect_bridge="${BRIDGE_SERVICE:-}"
+detect_bridge="${BRIDGE_SERVICE_OVR:-${BRIDGE_SERVICE:-}}"
 if [[ -z "$detect_bridge" && "${#run_services[@]}" -gt 0 ]]; then
   if [[ "$non_interactive" == "true" ]]; then
     detect_bridge="${run_services[0]}"
@@ -168,14 +252,70 @@ if [[ -z "$detect_bridge" && "${#run_services[@]}" -gt 0 ]]; then
     fi
   fi
 fi
-prompt BRIDGE_SERVICE "Cloud Run service name for Bridge" "${detect_bridge:-}"
+if [[ -z "$detect_bridge" ]]; then
+  # If we discovered exactly one service, use it non-interactively
+  if [[ "${#run_services[@]}" -eq 1 ]]; then
+    BRIDGE_SERVICE="${run_services[0]}"
+    echo "Using discovered Cloud Run service: $BRIDGE_SERVICE"
+  elif [[ "${#run_services[@]}" -gt 1 && "$non_interactive" == "true" ]]; then
+    # Heuristic: pick the only service containing 'bridge' if unique
+    mapfile -t _bridge_candidates < <(printf '%s
+' "${run_services[@]}" | grep -i 'bridge' || true)
+    if [[ "${#_bridge_candidates[@]}" -eq 1 ]]; then
+      BRIDGE_SERVICE="${_bridge_candidates[0]}"
+      echo "Using Cloud Run service by heuristic: $BRIDGE_SERVICE"
+    else
+      BRIDGE_SERVICE="bridge"
+      echo "Multiple services found; defaulting to: $BRIDGE_SERVICE"
+    fi
+  elif [[ "$non_interactive" == "true" ]]; then
+    BRIDGE_SERVICE="bridge"
+    echo "Using default Bridge service name: $BRIDGE_SERVICE"
+  else
+    def_bridge="bridge"
+    prompt BRIDGE_SERVICE "Cloud Run service name for Bridge" "$def_bridge"
+  fi
+else
+  BRIDGE_SERVICE="$detect_bridge"
+fi
+export BRIDGE_SERVICE
 
 # 5) Bridge URL
-detect_url="$(gcloud run services describe "$BRIDGE_SERVICE" --region="$REGION" --project="$PROJECT_ID" --format="value(status.url)" 2>/dev/null || true)"
-prompt BRIDGE_URL "Bridge HTTPS URL" "${BRIDGE_URL:-${detect_url:-}}"
+resolve_bridge_url() {
+  local svc="$1"; local reg="$2"; local proj="$3"
+  local url=""
+  # First try describe
+  url="$(gcloud run services describe "$svc" --region="$reg" --project="$proj" --format='value(status.url)' 2>/dev/null || true)"
+  if [[ -n "$url" ]]; then echo "$url"; return 0; fi
+  # Fallback: list and filter by name
+  url="$(gcloud run services list --region="$reg" --project="$proj" --filter="metadata.name=$svc" --format='value(status.url)' 2>/dev/null || true)"
+  if [[ -n "$url" ]]; then echo "$url"; return 0; fi
+  return 1
+}
+
+detect_url=""
+if [[ -n "${BRIDGE_URL_OVR}" ]]; then
+  BRIDGE_URL="$BRIDGE_URL_OVR"
+else
+  if [[ "$offline_mode" != "true" ]] && gcloud_available; then
+    detect_url="$(resolve_bridge_url "$BRIDGE_SERVICE" "$REGION" "$PROJECT_ID" || true)"
+  fi
+  if [[ -n "$detect_url" ]]; then
+    BRIDGE_URL="$detect_url"
+  else
+    if [[ "$non_interactive" == "true" ]]; then
+      echo "Warning: Could not auto-detect Bridge URL for service '$BRIDGE_SERVICE' in region '$REGION' and project '$PROJECT_ID'." >&2
+      echo "         Provide --bridge-url or ensure the service exists. Writing placeholder for now." >&2
+      BRIDGE_URL="https://your-bridge-url"
+    else
+      prompt BRIDGE_URL "Bridge HTTPS URL" "${BRIDGE_URL:-}"
+    fi
+  fi
+fi
+export BRIDGE_URL
 
 # 6) Push SA
-default_push_sa="${PUSH_SA:-bridge-push@${PROJECT_ID}.iam.gserviceaccount.com}"
+default_push_sa="${PUSH_SA_OVR:-${PUSH_SA:-bridge-push@${PROJECT_ID}.iam.gserviceaccount.com}}"
 prompt PUSH_SA "Pub/Sub push service account" "$default_push_sa"
 
 # Write .env

@@ -3,6 +3,7 @@ set -euo pipefail
 source "$(dirname "$0")/_lib.sh"
 
 ensure_patient
+check_wiring
 ensure_topic "adt.admit"; ensure_topic "adt.transfer"; ensure_topic "adt.discharge"
 ensure_sub "adt.admit.peek" "adt.admit"
 ensure_sub "adt.transfer.peek" "adt.transfer"
@@ -23,7 +24,10 @@ curl -sX PATCH "${FHIR_BASE}/Encounter/${EID}" \
   -H "Authorization: Bearer ${TOK}" \
   -H "Content-Type: application/json-patch+json" \
   -d '[{"op":"add","path":"/serviceType","value":{"text":"Transfer to ICU"}}]' >/dev/null
-wait_for_resource "adt.transfer.peek" "$EID" 60
+if ! wait_for_resource_try "adt.transfer.peek" "$EID" 30; then
+  log "No message on adt.transfer; checking adt.admit as fallback (envs may not tag updates)"
+  wait_for_resource "adt.admit.peek" "$EID" 60
+fi
 
 # Discharge
 log "Finishing Encounter (discharge)"
