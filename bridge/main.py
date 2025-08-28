@@ -13,6 +13,7 @@ PROJECT_ENV = os.getenv("PROJECT_ID") or os.getenv("GOOGLE_CLOUD_PROJECT")
 
 RESULTS_PRELIM_TOPIC = os.getenv("RESULTS_PRELIM_TOPIC", "results.prelim")
 RESULTS_FINAL_TOPIC  = os.getenv("RESULTS_FINAL_TOPIC",  "results.final.v1")
+ORDERS_CREATED_TOPIC = os.getenv("ORDERS_CREATED_TOPIC", "orders.created")
 ED_TRIAGE_TOPIC     = os.getenv("ED_TRIAGE_TOPIC",     "ed.triage")
 
 ADT_ADMIT_TOPIC      = os.getenv("ADT_ADMIT_TOPIC",      "adt.admit")
@@ -98,6 +99,9 @@ def choose_topic_for_encounter(res: dict, action: str | None) -> t.Optional[str]
 
 def occurred_at(res: dict) -> str:
     rt = res.get("resourceType")
+    if rt == "ServiceRequest":
+        return res.get("authoredOn") or res.get("meta", {}).get("lastUpdated") or now_iso()
+    rt = res.get("resourceType")
     if rt == "Encounter":
         period = res.get("period") or {}
         if (res.get("status") or "").lower() == "finished" and period.get("end"):
@@ -168,6 +172,17 @@ async def pubsub_push(request: Request):
 
     rtype = res.get("resourceType")
     action = attrs.get("action")  # CreateResource / UpdateResource / DeleteResource
+
+
+    if rtype == "ServiceRequest":
+        topic = ORDERS_CREATED_TOPIC if action == "CreateResource" else None
+        if topic:
+            env = build_envelope(topic, res)
+            try:
+                mid = publish(topic, env, project_id)
+                return JSONResponse({"status":"ok","published_to": topic, "project": project_id, "messageId": mid}, status_code=200)
+            except Exception as e:
+                return JSONResponse({"status":"error","reason": f"publish failed: {e}"}, status_code=500)
 
     if rtype == "Observation":
         topic = choose_topic_for_observation(res)
