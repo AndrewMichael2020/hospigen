@@ -1,0 +1,193 @@
+Minimal, stable “contracts” to keep the project coherent
+A) Event topics (what flows out of the synthetic hospital)
+
+Event topic = the channel name you publish to. It’s how downstream systems subscribe without knowing internals.
+
+adt.admit
+adt.transfer
+adt.discharge
+orders.placed
+orders.canceled
+results.prelim
+results.final
+notes.created
+meds.ordered
+meds.administered
+procedures.scheduled
+procedures.performed
+scheduling.appointment.booked
+scheduling.appointment.completed
+rpm.observation.created          # patient-generated (weight, BP, SpO2)
+admin.policy_shock               # you announce simulated shocks here
+
+
+Why: a fixed list prevents event sprawl and lets you wire once, reuse everywhere.
+
+B) Event envelope (JSON) — 1 shape for all topics
+
+Provenance = “who/what/when/how” created the data. It lets you trace, audit, and roll back.
+
+{
+  "event_id": "uuid",
+  "topic": "results.final",
+  "occurred_at": "2025-03-21T10:42:13Z",   // clinical time from the record
+  "published_at": "2025-03-21T10:45:00Z",  // when your bus emitted it
+  "source_system": "synthea.fhir-replay",  // or “synthea.csv-replay”, “sim-device”
+  "tenant": "sandbox-hospital-01",
+  "patient_ref": "pat_8f1c... (pseudonymous)",
+  "resource_type": "Observation",          // FHIR resource you embedded
+  "resource_id": "obs_12345",
+  "resource": { /* FHIR R4 resource snippet or link */ },
+  "provenance": {
+    "generator": "Synthea v3.3.1",
+    "generator_config": "british_columbia.json",
+    "module": "lab_results",
+    "rule_id": "CMP-panel-v2",
+    "version": "2025.03.18",
+    "ingested_from": "fhir_bundle|csv",
+    "input_hash": "sha256:...",
+    "trace_ids": ["bundle-aaa", "row:labs.csv:line:18273"]
+  }
+}
+
+
+Notes
+
+Keep resource small (only the relevant FHIR fields) OR store the full FHIR in object storage and put a URL here.
+
+occurred_at = clinical timestamp (from the record). published_at = when you emitted the event.
+
+C) “Insight” API contract (read-only JSON the edge consumes)
+
+Return the same shape across use-cases (discharge nudge, lab explainer, RPM alert).
+
+{
+  "insight_id": "ins_7b2c...",
+  "patient_ref": "pat_8f1c...",
+  "insight_type": "lab.explainer",         // e.g., rpm.weight_nudge | discharge.followup | cohort.flag
+  "severity": "info",                      // info | warning | critical
+  "title": "Sodium is slightly low",
+  "message": "Your sodium (Na) is 132 mmol/L (range 135–145). Drink fluids as advised...",
+  "data": {
+    "loinc": "2951-2",
+    "value": 132,
+    "unit": "mmol/L",
+    "reference_low": 135,
+    "reference_high": 145,
+    "trend_7d": "down"
+  },
+  "valid_from": "2025-03-21T11:00:00Z",
+  "valid_until": "2025-04-04T11:00:00Z",
+  "provenance": {
+    "logic_id": "lab-explainers@v1.4.2",
+    "inputs_span": {
+      "events_from": "2025-03-14T00:00:00Z",
+      "events_to": "2025-03-21T10:45:00Z"
+    },
+    "source_marts": ["mart_labs_daily_v3"],
+    "last_refresh_ts": "2025-03-21T10:59:55Z"
+  }
+}
+
+
+Why “Provenance” on insights: you can show patients/clinicians what rule produced this, from which data, and when it refreshed. That’s your safety net.
+
+D) Minimal entities (stable IDs and must-have fields)
+
+Keep IDs pseudonymous and format-locked.
+
+Patient: patient_ref, birth_year, sex_at_birth, zip_fsa (or FSA in Canada), deceased_flag.
+
+Encounter: encounter_id, patient_ref, class (ED|inpatient|outpatient), start, end, location, admit_dx (ICD).
+
+Observation (lab/vitals/RPM): observation_id, patient_ref, code_system+code (LOINC), value, unit, effective_time, status.
+
+Order/Result: order_id/result_id, patient_ref, type (lab|imaging|procedure), ordered_at, status, performer.
+
+Medication: med_id, patient_ref, rxnorm (plus ATC/DIN if you add), dose, route, status, authored_on.
+
+Note: note_id, patient_ref, encounter_id, type (ED note, discharge note), created_at, text (optional link), nlp_tags (optional).
+
+These fields are enough to power 80% of analytics and patient-edge demos without re-modeling every month.
+
+Can Synthea give me an “event heartbeat”?
+
+Short answer: not natively. Synthea generates full patient histories and then exports (CSV/FHIR). It doesn’t push real-time events by itself.
+
+Two simple ways to get a heartbeat:
+
+Replayer (easiest and sufficient)
+
+Generate with Synthea (CSV or FHIR bundles).
+
+Load into a small replayer that:
+
+sorts all records by their clinical timestamps,
+
+emits them as events to your bus (e.g., Kafka topics above) with a controlled wall-clock pacing (e.g., 1 clinical hour = 10 real seconds).
+
+Advantage: totally decoupled; you can “rewind” or “fast-forward” scenarios.
+
+FHIR server + Subscription
+
+Post Synthea’s FHIR bundles into a local FHIR server (HAPI).
+
+Create FHIR Subscriptions for resource types (Observation, Encounter, etc.).
+
+As resources are created, the server fires webhooks to your bus (still batchy if you load in bulk, but easy to wire).
+
+Either way, you own the event clock; Synthea is your history source.
+
+“Shocks” and policy events — where to implement?
+
+You have three viable layers (combinable):
+
+Inside Synthea modules (Module Builder)
+
+Yes, you can encode shocks as guards and probability changes:
+
+Date-based guards (e.g., “after 2025-07-01, increase influenza incidence by 25%”).
+
+Region-based guards (affect certain places).
+
+Care-path toggles (e.g., new screening guideline alters orders).
+
+How: fork/edit modules in the Module Builder repo you linked; add Guard states and tweak distributions/Delays/Transitions. This bakes the shock into generated histories.
+
+At the replayer (event injector)
+
+Inject “admin.policy_shock” events at time T, and have downstream logic respond:
+
+Raise admission rates by X%,
+
+Change triage thresholds,
+
+Route more labs to “prelim” first.
+
+Pros: fast to iterate; you don’t regenerate Synthea. Cons: it’s an overlay, not ground-truth in the histories.
+
+In the analytics/ML layer (rulesets)
+
+Flip feature flags at admin.policy_shock:
+
+Switch to new lab reference ranges,
+
+Turn on a “sepsis-predictor” simulation,
+
+Change discharge call logic.
+
+This is closest to how real systems deploy policy. It doesn’t change the past, only system behavior going forward.
+
+Practical approach:
+
+Use Module Builder for structural shocks you want reflected in patient histories (e.g., vaccination policy changes).
+
+Use replayer for operational shocks (e.g., ED surge day).
+
+Use analytics rules for policy toggles (explainers, thresholds).
+
+Quick clarifications (plain language)
+
+Event topic = the name of the stream a message goes to (like a radio channel: “results.final”). Apps subscribe by topic, so you can evolve internals safely.
+
+Provenance = trace metadata explaining who/what/when/how produced a message or an insight (generator version, inputs, refresh time). It’s your audit trail and rollback handle.

@@ -1,4 +1,11 @@
+# Hospigen topics.yaml (pre‑Synthea, v1.1)
+# Includes ED lifecycle signals + changefeed + DLQs.
 topics:
+  - fhir.changes
+  - ed.triage
+  - ed.admit_decision
+  - ed.boarding.started
+  - ed.boarding.ended
   - adt.admit
   - adt.transfer
   - adt.discharge
@@ -13,3 +20,5 @@ topics:
   - rpm.observation.created
   - admin.policy_shock
   - heartbeat
+  - dlq.fhir
+  - dlq.events

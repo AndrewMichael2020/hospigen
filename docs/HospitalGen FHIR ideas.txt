@@ -1,0 +1,92 @@
+Where to get a FHIR server (with Subscriptions)
+
+HAPI FHIR JPA Server (open source) — the standard choice. Runs anywhere (Docker, VM, k8s). Supports R4/R5 and Subscriptions (REST-hook, WebSocket; Kafka bridge via extension).
+
+Smile CDR (commercial, HAPI-based) — turnkey, robust Subscriptions, Kafka/AMQP connectors.
+
+Cloud FHIR stores (managed)
+
+Google Cloud Healthcare API (FHIR Store) → Pub/Sub notifications per resource type/query.
+
+Azure API for FHIR → Event Grid notifications / DICOM/FHIR events.
+
+AWS HealthLake (FHIR) → eventing/export options (less granular than HAPI’s Subscriptions).
+
+“Span where?” (deployment targets)
+
+Laptop (Docker) → fastest dev loop, feeds your local bus (Kafka/HTTP webhook).
+
+On-prem VM → stable sandbox; point Subscriptions to an internal webhook/Kafka.
+
+Kubernetes (kind/minikube, AKS/EKS/GKE) → scalable; easiest to wire to Kafka/NATS.
+
+Fully managed (GCP/Azure/AWS) → no server ops; use native messaging (Pub/Sub/Event Grid/Kinesis).
+
+Minimal: local HAPI in Docker + REST-hook Subscription
+
+docker-compose.yml
+
+version: "3.8"
+services:
+  hapi-fhir:
+    image: hapiproject/hapi:latest
+    environment:
+      - hapi.fhir_version=R4
+      - spring.datasource.url=jdbc:h2:file:/data/hapi
+    ports: ["8080:8080"]
+    volumes: ["./data:/data"]
+
+
+Run:
+
+docker compose up -d
+# HAPI base: http://localhost:8080/fhir/
+
+
+Load Synthea bundles
+
+for f in ./synthea_output/fhir/*.json; do
+  curl -s -X POST "http://localhost:8080/fhir/" \
+       -H "Content-Type: application/fhir+json" \
+       --data-binary "@$f" > /dev/null
+done
+
+
+Create a Subscription (R4, REST-hook to your event endpoint)
+
+curl -s -X POST "http://localhost:8080/fhir/Subscription" \
+  -H "Content-Type: application/fhir+json" \
+  -d '{
+    "resourceType": "Subscription",
+    "status": "active",
+    "reason": "Forward new Observations to event bus",
+    "criteria": "Observation?status=final",
+    "channel": {
+      "type": "rest-hook",
+      "endpoint": "http://localhost:9000/hooks/fhir",
+      "payload": "application/fhir+json"
+    }
+}'
+
+
+HAPI will POST every new final Observation to http://localhost:9000/hooks/fhir.
+
+Point that endpoint to your event replayer/bridge, which wraps incoming FHIR into your Event Envelope and publishes to topics (e.g., results.final).
+
+Need Kafka directly? Keep REST-hook and let your webhook publish to Kafka, or use HAPI extensions/Smile CDR for native Kafka.
+
+Minimal with Google Cloud (no server to run)
+
+Create a FHIR Store (Healthcare API), enable Pub/Sub notifications for Observation, Encounter, etc.
+
+Your Pub/Sub subscriber transforms messages → your Event Envelope → publishes to topics.
+
+Good when you don’t want to host HAPI; you still replay Synthea bundles into the store (HTTP import).
+
+Notes
+
+Security: put a reverse proxy (TLS, auth) in front of HAPI for anything beyond localhost.
+
+Throughput: bulk loading Synthea will trigger a burst of webhooks. Throttle or buffer in your bridge.
+
+Event clock: to simulate a real “heartbeat,” prefer replay pacing (emit by clinical time) rather than dumping all bundles at once; Subscriptions will still work, but your bridge should sleep between sends.

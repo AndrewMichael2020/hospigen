@@ -2,22 +2,39 @@
   "type": "record",
   "name": "HospitalGenEnvelope",
   "namespace": "hospigen.v1",
+  "doc": "Streaming envelope for ED/IP events, v1.1",
   "fields": [
-    {"name":"event_id","type":"string"},
-    {"name":"topic","type":"string"},
-    {"name":"occurred_at","type":"string"},
-    {"name":"published_at","type":"string"},
-    {"name":"patient_ref","type":["null","string"],"default":null},
-    {"name":"resource_type","type":"string"},
-    {"name":"resource","type":"string"},
-    {"name":"provenance","type":{
-      "type":"record","name":"Provenance",
-      "fields":[
-        {"name":"source_system","type":"string"},
-        {"name":"logic_id","type":"string"},
-        {"name":"inputs_span","type":"string"},
-        {"name":"trace","type":["null","string"],"default":null}
-      ]
-    }}
+    { "name": "event_id",       "type": "string" },
+    { "name": "topic",          "type": "string" },
+    { "name": "occurred_at",    "type": "string", "doc": "ISO-8601 clinical time" },
+    { "name": "published_at",   "type": "string", "doc": "ISO-8601 stream time" },
+
+    { "name": "patient_ref",    "type": ["null","string"], "default": null },
+    { "name": "encounter_ref",  "type": ["null","string"], "default": null },
+    { "name": "visit_number",   "type": ["null","string"], "default": null },
+    { "name": "facility",       "type": ["null","string"], "default": null },
+    { "name": "department",     "type": ["null","string"], "default": null },
+    { "name": "bed_ref",        "type": ["null","string"], "default": null },
+
+    { "name": "correlation_id", "type": ["null","string"], "default": null },
+    { "name": "sequence",       "type": ["null","long"],   "default": null },
+
+    { "name": "resource_type",  "type": "string" },
+    { "name": "resource_id",    "type": ["null","string"], "default": null },
+    { "name": "resource",       "type": "string", "doc": "FHIR JSON string" },
+    { "name": "content_schema", "type": ["null","string"], "default": null },
+
+    { "name": "provenance",
+      "type": {
+        "type": "record",
+        "name": "Provenance",
+        "fields": [
+          { "name": "source_system", "type": "string" },
+          { "name": "logic_id",      "type": "string" },
+          { "name": "inputs_span",   "type": "string" },
+          { "name": "trace",         "type": ["null","string"], "default": null }
+        ]
+      }
+    }
   ]
 }

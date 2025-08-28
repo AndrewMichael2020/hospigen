@@ -1,0 +1,126 @@
+Strategic plan (beginner-friendly, GCP + Google FHIR + Kafka/RT)
+Non-negotiables to keep you coherent
+
+Fix the event topics and a single event envelope now; don’t change them later. This is your contract across all stages. 
+
+Anchor the scope to one thin clinical thread (ED chest-pain → admit vs discharge) until everything works end-to-end. 
+
+Treat Synthea as history; add a replayer/bridge to create the “heartbeat” and inject shocks. Synthea doesn’t stream in real time by itself.
+
+Stage 0 — Sandbox setup (1–2 evenings)
+
+Goal: a tiny, repeatable stack that can emit and view events.
+
+GCP managed core:
+
+Create a Healthcare API FHIR Store and enable Pub/Sub notifications for Observation, Encounter, etc. 
+
+Stand up a minimal Event Bridge (one small service) that:
+
+reads Pub/Sub messages,
+
+wraps them into your event envelope,
+
+publishes to topics (start with HTTP logs; add Kafka later).
+
+Local Kafka (optional in Stage 0): keep it off until Stage 2 so you’re not blocked.
+
+Definition of done: you can load one FHIR resource and see a correctly wrapped event printed with topic, occurred_at, published_at, provenance. 
+
+Stage 1 — Historical backfill (Synthea → FHIR → Replay) (1 weekend)
+
+Goal: build a believable historical base for analytics.
+
+Generate Synthea patients; load bundles into your FHIR Store. 
+
+Add Replayer mode to the Event Bridge:
+
+Sort by clinical time and emit to your fixed topics with pacing = off (fast build) or bucketed by day. 
+
+Land events two ways:
+
+Real-time views: simple in-memory or DuckDB table keyed by patient/encounter.
+
+Lake/warehouse: start with BigQuery daily tables for LOS and counts. 
+
+Definition of done: you can compute basic ED LOS distribution and admit rate from your event history.
+
+Stage 2 — Living heartbeat (real-time) (1 weekend)
+
+Goal: the system “moves” minute-by-minute.
+
+Turn on pacing in the Replayer (e.g., “1 clinical hour = 10 s”). 
+
+Add tiny transaction simulators for deltas (arrivals, vitals, lab TAT) so the stream stays fresh without regenerating Synthea. 
+
+Introduce Kafka now (local or GCP VM): Bridge publishes each topic (adt.admit, results.final, meds.administered, etc.). 
+
+Stand up one real-time materialized view: current ED board (per-patient state machine from topics). 
+
+Definition of done: watch patients flow across ED states in real time from your Kafka topics.
+
+Stage 3 — Shocks and policy toggles (1–2 evenings)
+
+Goal: make it “living” for experiments.
+
+Emit admin.policy_shock events and let the Bridge mutate pacing/queues (e.g., ED arrivals +20% for 12h, lab TAT +30%).
+
+If you want structural changes baked into histories, edit Synthea modules later; keep operational shocks in the Bridge for fast iteration. 
+
+Definition of done: dashboards and RT views visibly respond to a shock without code changes downstream.
+
+Stage 4 — Insight API (read-only, provenance) (1 weekend)
+
+Goal: a stable edge contract that any UI can consume.
+
+Implement the Insight API (read-only JSON) that returns guarded insights (e.g., “lab.explainer”) with provenance and validity window.
+
+Build one patient widget (web) that renders a lab explainer for sodium from results.final. 
+
+Definition of done: given live events, the widget updates, and the API response includes logic_id, inputs_span, and last_refresh_ts. 
+
+Stage 5 — Analytics/ML surfaces (add slowly)
+
+Goal: analytics that survive refactors because contracts don’t move.
+
+Batch marts in BigQuery for LOS, return-to-ED, time-in-stage.
+
+Feature/cohort store for the thin thread (chest-pain), feeding a simple LOS or admit-risk model. 
+
+Wire observability: data-quality checks on topic freshness and null rates. 
+
+Definition of done: one small model publishes an insight (e.g., risk tier) that the patient/ops views can see, with provenance.
+
+What to actually build first (files and repos)
+
+hospitalgen-contracts/: JSON Schemas for Event Envelope, Insight API, plus the fixed topic list. Never break these. 
+
+hospitalgen-bridge/: one service with two modes: subscription (Pub/Sub→envelope→topic) and replay (Synthea→pacing→topic). Include admin.policy_shock injection.
+
+hospitalgen-views/:
+
+ed_board_rt/ (reads topics, holds current state),
+
+bq_marts/ (daily snapshots). 
+
+hospitalgen-insights/: read-only API that serves lab.explainer first, with provenance fields. 
+
+hospitalgen-ui/: minimal web widget that calls the Insight API and renders safely. 
+
+Beginner constraints baked in
+
+Use managed GCP FHIR and Pub/Sub to avoid running a FHIR server today; switch to HAPI later only if you want native Subscription patterns. 
+
+Keep Kafka optional until Stage 2; the Bridge can log or use Pub/Sub first, then dual-publish to Kafka once running. 
+
+Drive everything off the one thread; expand only after the end-to-end loop is stable. 
+
+Milestone demo sequence (what you’ll show)
+
+History: charts from BigQuery built from replayed Synthea events. 
+
+Heartbeat: a live ED board changing as events arrive. 
+
+Shock: a 12-hour surge changes wait times without redeploys. 
+
+Insight: a lab explainer with provenance visible in the UI.

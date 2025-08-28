@@ -1,0 +1,160 @@
+ED → Acute Inpatient, “historical + living” data architecture (concise)
+               ┌────────────────────────────────────────────────────────────────┐
+               │                         CONTROL PLANE                           │
+               │   Scenario packs ▸ shocks/policies ▸ clocks ▸ kill-switches    │
+               └───────────────▲───────────────────────────▲────────────────────┘
+                               │                           │
+                               │                           │
+     HISTORICAL BACKFILL       │                           │        LIVING HEARTBEAT
+┌───────────────────────────┐  │                           │   ┌───────────────────────────┐
+│ Synthea batch generators  │  │                           │   │ Transaction/Device sims  │
+│  • Base modules (ED/IP)   │  │                           │   │  • vitals, labs, meds     │
+│  • Localized configs      │  │                           │   │  • bed mgmt, paging      │
+│  • Optional module edits  │  │                           │   │  • incremental arrivals  │
+└───────────┬───────────────┘  │                           │   └───────────┬───────────────┘
+            │  FHIR/CSV          ┌─────────────────────────┴─────────┐       │ events
+            ▼                    │    EVENT BRIDGE / REPLAYER        │       ▼
+      ┌───────────────┐          │  • parses FHIR/CSV                 │  ┌───────────────┐
+      │ FHIR Store /  │──load──▶ │  • assigns topics + pacing         │  │ Event Bus     │
+      │ HAPI Server   │          │  • adds provenance & ids           │  │ (Kafka/NATS)  │
+      └───────────────┘          └───────────────┬───────────────────┘  └───────────────┘
+                                                  │
+                                ┌─────────────────┼──────────────────┐
+                                ▼                 ▼                  ▼
+                        ┌──────────────┐  ┌──────────────┐   ┌─────────────────┐
+                        │ Real-time MV │  │ Lake/Warehouse│   │ Feature/Cohort  │
+                        │ (Flink/Spark)│  │ (Delta/SQL)   │   │ Store           │
+                        └──────▲───────┘  └──────▲───────┘   └────────▲────────┘
+                               │                 │                     │
+                               │                 │                     │
+                               ▼                 ▼                     ▼
+                         ┌────────────┐   ┌──────────────┐     ┌────────────────┐
+                         │ Insight API│   │ BI/SQL marts │     │ ML/GenAI svcs  │
+                         │ (read-only)│   │ & reporting  │     │ (NLP/RAG/Triage)│
+                         └─────▲──────┘   └──────▲───────┘     └────────▲────────┘
+                               │                 │                      │
+                               │                 │                      │
+                               ▼                 ▼                      ▼
+                     ┌─────────────────┐  ┌──────────────┐     ┌─────────────────┐
+                     │ Patient widgets │  │ Ops dashboards│     │ Safety/Policy   │
+                     │ (explainers)    │  │ (capacity, LOS)│    │ (guardrails)    │
+                     └─────────────────┘  └──────────────┘     └─────────────────┘
+
+Core ideas (ED→IP flow–centric)
+Event topics (fixed, small)
+
+adt.admit, adt.transfer, adt.discharge
+
+ed.triage, ed.bed.assigned, ed.bed.released
+
+orders.placed, results.prelim, results.final
+
+meds.ordered, meds.administered
+
+imaging.ordered, imaging.report.final
+
+notes.created (ED note, H&P, discharge)
+
+bedmgmt.request, bedmgmt.commit
+
+admin.policy_shock (capacity rule, turnaround change, guideline switch)
+
+Event envelope (always the same)
+
+event_id, topic, occurred_at (clinical time), published_at (wall-clock),
+
+patient_ref (pseudonymous), resource_type, resource (FHIR snippet or link),
+
+provenance = generator/version/module/rule/config + input hashes.
+
+Provenance = audit trail. Lets you trace which synthetic rule/module created an event and roll back a bad scenario.
+
+Historical vs Living: how to generate both
+Historical backfill (ground truth)
+
+What: multi-year ED→inpatient histories with realistic timestamps.
+
+How:
+
+Run Synthea to produce FHIR/CSV (optionally customize ED/IP modules for your region).
+
+Load into FHIR Store/HAPI (keeps canonical record).
+
+Event Bridge/Replayer reads in chronological order, emits to topics without pacing (or with “historical day buckets”) to build marts quickly.
+
+Why: creates the longitudinal base (case-mix, seasonality, comorbidities) for analytics and ML.
+
+Living heartbeat (ongoing motion)
+
+What: continuous arrivals, orders, results, bed moves, notes—minute by minute.
+
+Two simple options:
+
+Replayer with pacing: same Event Bridge, but apply a clock (e.g., 1 clinical hour = 10 sec), emitting events steadily → “hospital in motion.”
+
+Transaction simulators: small generators for arrivals, vitals, lab TAT, bed requests, driven by simple queues and distributions (no need to regenerate Synthea). Use them alongside replayer for freshness.
+
+Synthea doesn’t stream in real time by itself. The Replayer (or FHIR Subscriptions) gives you the heartbeat.
+
+Where to encode shocks/policy changes
+
+In Synthea modules (Module Builder)
+Structural changes you want baked into histories (e.g., new sepsis order set; different ED triage probabilities; vaccination policy). Use Guard states, date-based probabilities, and altered transitions.
+
+In the Event Bridge (overlay)
+Operational shocks you want immediately (e.g., lab TAT +30%, bed capacity −10%, ED arrivals +20% for 12h). Emit admin.policy_shock and let the bridge mutate subsequent event pacing/routes.
+
+In analytics/ML rules
+Policy toggles for explainers/thresholds (e.g., new sodium ref range, different readmit risk cutoff). Version them; surface the active version in Insight provenance.
+
+ED→Acute inpatient flow: minimal domain you actually need
+
+Entities
+
+Patient, Encounter (ED|IP), Bed, Order, Observation, Medication, ImagingReport, Note, Provider.
+
+Key timelines (randomized distributions)
+
+Arrival→triage (5–30 min), triage→bed (0–6 h), lab TAT (CBC 30–90 min; Troponin staged),
+
+imaging TAT (XR 45–120 min; CT 1–4 h),
+
+ED length of stay (2–12 h), admit decision→ward bed (1–18 h),
+
+IP LOS by DRG/CMG cluster (e.g., CHF median 4–6 d).
+
+Capacity queues
+
+ED beds, inpatient beds (med/surg), imaging backlog, lab bench capacity.
+Small Poisson/queue models add “friction” that makes the stream believable.
+
+State & analytics surfaces
+
+Real-time materialized views: current ED board, bed queue, labs pending, imaging pending.
+
+Lake/warehouse: daily snapshots, LOS distributions, readmit/return-to-ED, time-in-stage metrics.
+
+Feature/Cohort store: ED cohorts (e.g., chest pain), rolling vitals trends, risk labels; versioned.
+
+Insight API (read-only, stable contract):
+
+ed.board.card (per-patient state), lab.explainer, discharge.followup, capacity.alert.
+
+Always return provenance: logic_id, inputs_span, last_refresh_ts.
+
+Safety/Policy:
+Blocks unsafe patient messages; enforces consent flags; every insight tagged with refresh time + rule version.
+
+Minimal deployments (pick one)
+
+Local dev (fastest): Docker compose: HAPI FHIR + tiny Event Bridge (Node/TS or Python) + NATS/Kafka + DuckDB; optional Flink/Spark later.
+
+Managed (simpler ops): GCP Healthcare FHIR Store + Pub/Sub → Bridge → Kafka (optional) → BigQuery/Delta; small Node/TS Insight API.
+
+What to build first (strategic, not procedural)
+
+The seam between history and heartbeat: one Event Bridge that can replay or pace, inject shocks, and stamp provenance.
+
+One thin pathway: ED chest-pain → admit vs discharge. All sims, analytics, and insights hang on this thread until coherent.
+
+Contracts don’t move: topics, envelope, Insight API, provenance fields. Everything else can evolve.

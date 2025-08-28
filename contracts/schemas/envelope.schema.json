@@ -1,24 +1,43 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "HospitalGen Event Envelope",
+  "$id": "https://hospigen.dev/schemas/envelope.schema.json",
+  "title": "HospitalGenEnvelope v1.1",
   "type": "object",
-  "required": ["event_id","topic","occurred_at","published_at","resource_type","resource","provenance"],
+  "additionalProperties": false,
+  "required": [
+    "event_id", "topic", "occurred_at", "published_at",
+    "resource_type", "resource", "provenance"
+  ],
   "properties": {
-    "event_id": {"type":"string"},
-    "topic": {"type":"string"},
-    "occurred_at": {"type":"string","format":"date-time"},
-    "published_at": {"type":"string","format":"date-time"},
-    "patient_ref": {"type":["string","null"]},
-    "resource_type": {"type":"string"},
-    "resource": {"type":"object"},
+    "event_id":       { "type": "string" },
+    "topic":          { "type": "string" },
+    "occurred_at":    { "type": "string", "format": "date-time" },
+    "published_at":   { "type": "string", "format": "date-time" },
+
+    "patient_ref":    { "type": ["string","null"] },
+    "encounter_ref":  { "type": ["string","null"] },
+    "visit_number":   { "type": ["string","null"] },
+    "facility":       { "type": ["string","null"] },
+    "department":     { "type": ["string","null"] },
+    "bed_ref":        { "type": ["string","null"] },
+
+    "correlation_id": { "type": ["string","null"] },
+    "sequence":       { "type": ["integer","null"], "minimum": 0 },
+
+    "resource_type":  { "type": "string" },
+    "resource_id":    { "type": ["string","null"] },
+    "resource":       { "type": "string" },
+    "content_schema": { "type": ["string","null"] },
+
     "provenance": {
-      "type":"object",
-      "required":["source_system","logic_id","inputs_span"],
-      "properties":{
-        "source_system":{"type":"string"},
-        "logic_id":{"type":"string"},
-        "inputs_span":{"type":"string"},
-        "trace":{"type":["object","null"]}
+      "type": "object",
+      "required": ["source_system", "logic_id", "inputs_span"],
+      "additionalProperties": false,
+      "properties": {
+        "source_system": { "type": "string" },
+        "logic_id":      { "type": "string" },
+        "inputs_span":   { "type": "string" },
+        "trace":         { "type": ["string","null"] }
       }
     }
   }

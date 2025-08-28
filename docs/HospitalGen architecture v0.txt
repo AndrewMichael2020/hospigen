@@ -1,0 +1,81 @@
+Living Synthetic Hospital — Conceptual Architecture (text diagram)
+                             ┌───────────────────────────────────────────────────┐
+                             │                  PATIENT EDGE                     │
+                             │                                                   │
+      Web/Portal Apps  ─────▶│  Patient Portal / Results Explainers / Education │
+  (no PHI off-prem if local) │  RPM Device Ingest (BYOD via partner)            │
+                             │  Secure Messaging / IVR-SMS Check-ins            │
+                             └───────────────▲───────────────┬──────────────────┘
+                                             │               │
+                                             │ Read-only     │ Evented nudges
+                                             │ Insights API  │ (post-discharge, RPM)
+                                             │               │
+┌────────────────────────────────────────────┼───────────────▼─────────────────────────────┐
+│                         ANALYTICS / ML / GENAI LAYER (LIVING)                             │
+│                                                                                           │
+│  ┌──────────────┐   ┌───────────────┐   ┌────────────────────┐   ┌─────────────────────┐ │
+│  │ Feature &    │   │ Analytics     │   │ GenAI Services     │   │ Safety & Policy     │ │
+│  │ Cohort Store │   │ Warehouses    │   │ (NLP, TTS, RAG)    │   │ Engine (Rules/AI)   │ │
+│  │ (features,   │   │ (star/lake)   │   │ - Note summary     │   │ - Harm classes      │ │
+│  │ labels, IDs) │   │ + Semantic    │   │ - Q&A on docs      │   │ - Guardrails        │ │
+│  └─────▲────────┘   │ Layer (metrics│   │ - Result explainers│   │ - Rollback plans    │ │
+│        │            │  & definitions)│  │ - Triage helpers   │   └─────────▲───────────┘ │
+│        │            └─────────▲──────┘   └───────────▲───────┘             │             │
+│        │                      │                      │                     │             │
+│  ┌─────┴────────┐     ┌───────┴────────┐     ┌───────┴────────┐    ┌───────┴────────┐   │
+│  │ Streaming/    │     │ Batch Models   │     │ Experiment     │    │ Observability  │   │
+│  │ Real-time     │     │ (forecasting,  │     │ Harness A/B    │    │ & Data Quality │   │
+│  │ Materialized  │     │ risk, LOS,     │     │ (impact sims)  │    │ (DQ tests, SLO)│   │
+│  │ Views (Kafka/ │     │ readmit)       │     │                │    │                │   │
+│  │ Flink/Spark)  │     └────────────────┘     └────────────────┘    └────────────────┘   │
+│                                                                                           │
+│         ▲                          ▲                            ▲                         │
+│         │ Features/labels          │ Curated marts/semantics    │ Guarded insights        │
+└─────────┼──────────────────────────┼─────────────────────────────┼─────────────────────────┘
+          │                          │                             │
+          │                          │                             │
+          │        Insights (read-only JSON, provenance)           │
+          │                          │                             │
+          ▼                          ▼                             ▼
+┌──────────────────────────────────────────────────────────────────────────────────────────┐
+│                                 HOSPITAL CORE (SYNTHETIC)                                 │
+│                                                                                          │
+│  ┌──────────────┐   ┌──────────────┐   ┌──────────────┐   ┌──────────────┐              │
+│  │ EHR (Synthea │   │ Orders/Results│   │ Notes &      │   │ Scheduling   │              │
+│  │ modules →    │   │ (Labs, Imaging│   │ Flowsheets   │   │ & ADT        │              │
+│  │ Encounters,  │   │ Meds, Proc)   │   │ (semi-struct)│   │ (HL7/FHIR)   │              │
+│  │ Diagnoses)   │   └────▲──────────┘   └────▲─────────┘   └────▲─────────┘              │
+│  └──────▲───────┘        │                   │                  │                        │
+│         │                 │ Event Bus (HL7/FHIR topics)         │                        │
+│  ┌──────┴────────┐   ┌───┴─────────┐   ┌────┴────────┐   ┌──────┴────────┐              │
+│  │ Terminology   │   │ Device/RPM  │   │ Provider &  │   │ Geography &   │              │
+│  │ (ICD/SNOMED/  │   │ Sim (vitals │   │ Org Roster  │   │ Demography    │              │
+│  │ LOINC/ATC/DIN)│   │ & events)    │   │ (rosters)   │   │ (BC/regions)  │              │
+│  └───────────────┘   └──────────────┘   └─────────────┘   └───────────────┘              │
+│                                                                                          │
+│             ┌──────────────────────── Governance / AMF-style Catalog ───────────────────┐ │
+│             │ Product metadata, refresh SLAs, lineage, consent flags, audit, access    │ │
+│             └───────────────────────────────────────────────────────────────────────────┘ │
+└──────────────────────────────────────────────────────────────────────────────────────────┘
+
+Legend: Hospital Core emits events → Analytics/ML derives features, marts, and guarded insights → Patient Edge consumes insights via API and returns engagement/RPM signals. Safety/Policy engine gates anything patient-facing.
+
+Notes that make it “living”
+
+Event heartbeat: Core publishes ADT/Orders/Results/Notes as a stream; synthetic patients keep arriving, being treated, discharged.
+
+Policy shocks: inject scenario switches (e.g., new guideline, staffing change). Analytics/ML re-equilibrates → you observe system impact.
+
+Closed loops: Patient Edge (RPM check-ins, explainers) feeds back engagement/outcomes to the Feature Store; experiments measure lift/harms.
+
+Guardrails first: Safety/Policy engine tags every outward insight with provenance (refresh time, rule/model id) and blocks unsafe messaging.
+
+One “thin thread”: Start with a single care pathway (e.g., ED → inpatient → discharge CHF). Every layer (EHR, analytics, GenAI, patient UI) hangs off that same thread to stay coherent.
+
+What this enables
+
+Swap models without rewiring apps (insights are contracted JSON with provenance).
+
+Test system effects, not just model metrics (A/B harness tracks readmits/ED returns under synthetic shocks).
+
+Stay privacy-clean: all PHI is synthetic; patient-edge artifacts are generated from read-only insights with audit/consent flags.
