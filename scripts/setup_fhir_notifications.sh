@@ -7,7 +7,9 @@ if [ -f .env ]; then source .env; fi
 
 gcloud config set project "$PROJECT_ID" >/dev/null
 
-# Send all FHIR changes to the unified topic
-gcloud healthcare fhir-stores update "$STORE_ID"   --dataset="$DATASET_ID"   --notification-config="topic=projects/${PROJECT_ID}/topics/fhir.changes"
+# Use correct flag for notifications
+gcloud healthcare fhir-stores update "$STORE_ID" \
+  --dataset="$DATASET_ID" \
+  --pubsub-topic="projects/${PROJECT_ID}/topics/fhir.changes"
 
 echo "FHIR store notifications set to projects/${PROJECT_ID}/topics/fhir.changes"

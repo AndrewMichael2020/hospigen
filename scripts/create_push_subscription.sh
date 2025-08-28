@@ -5,17 +5,34 @@ if [ -f .env ]; then source .env; fi
 : "${REGION:?}"
 : "${BRIDGE_SERVICE:?}"
 : "${BRIDGE_URL:?}"
-: "${PUSH_SA:?}"
+
+# Default SA name
+PUSH_SA="${PUSH_SA:-bridge-push@${PROJECT_ID}.iam.gserviceaccount.com}"
 
 gcloud config set project "$PROJECT_ID" >/dev/null
 
+# Ensure service account exists
+if ! gcloud iam service-accounts describe "${PUSH_SA}" >/dev/null 2>&1; then
+  echo "Creating service account: ${PUSH_SA}"
+  gcloud iam service-accounts create bridge-push \
+    --display-name="Hospigen Bridge Pub/Sub Push Invoker" || true
+fi
+
 # Allow push SA to invoke Bridge
-gcloud run services add-iam-policy-binding "$BRIDGE_SERVICE"   --region "$REGION"   --member="serviceAccount:${PUSH_SA}"   --role="roles/run.invoker"
+gcloud run services add-iam-policy-binding "$BRIDGE_SERVICE" \
+  --region "$REGION" \
+  --member="serviceAccount:${PUSH_SA}" \
+  --role="roles/run.invoker"
 
 # Create DLQ if missing (defensive)
 gcloud pubsub topics create dlq.fhir 2>/dev/null || true
 
 # Create push subscription from fhir.changes to Bridge
-gcloud pubsub subscriptions create fhir.changes.to-bridge   --topic=fhir.changes   --push-endpoint="${BRIDGE_URL}/pubsub/push"   --push-auth-service-account="${PUSH_SA}"   --dead-letter-topic="projects/${PROJECT_ID}/topics/dlq.fhir"   --max-delivery-attempts=5 || echo "Subscription exists: fhir.changes.to-bridge"
+gcloud pubsub subscriptions create fhir.changes.to-bridge \
+  --topic=fhir.changes \
+  --push-endpoint="${BRIDGE_URL}/pubsub/push" \
+  --push-auth-service-account="${PUSH_SA}" \
+  --dead-letter-topic="projects/${PROJECT_ID}/topics/dlq.fhir" \
+  --max-delivery-attempts=5 || echo "Subscription exists: fhir.changes.to-bridge"
 
 echo "Push subscription created: fhir.changes.to-bridge -> ${BRIDGE_URL}/pubsub/push"
