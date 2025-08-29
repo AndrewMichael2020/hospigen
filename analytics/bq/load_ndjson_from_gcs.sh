@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Load processed_resources/*.ndjson files into a single BigQuery staging table
+# Usage: load_ndjson_from_gcs.sh --dataset DATASET --gcs "gs://bucket/processed_resources/*.ndjson" [-p PROJECT] [--location northamerica-northeast1]
+
+PROJECT_ID=""
+DATASET=""
+GCS_GLOB=""
+LOCATION="northamerica-northeast1"
+
+usage(){
+  cat <<'EOF'
+Usage: load_ndjson_from_gcs.sh --dataset DATASET --gcs gs://bucket/processed_resources/*.ndjson [-p PROJECT] [--location]
+
+This will load all NDJSON resource files into ${PROJECT}.${DATASET}.raw_records_stg
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --dataset) DATASET="$2"; shift 2;;
+    --gcs) GCS_GLOB="$2"; shift 2;;
+    -p|--project) PROJECT_ID="$2"; shift 2;;
+    --location) LOCATION="$2"; shift 2;;
+    -h|--help) usage; exit 0;;
+    *) echo "Unknown arg: $1" >&2; usage; exit 1;;
+  esac
+done
+
+if [[ -z "$DATASET" || -z "$GCS_GLOB" ]]; then
+  usage; exit 1
+fi
+
+if [[ -z "$PROJECT_ID" ]]; then
+  PROJECT_ID=$(gcloud config get-value project 2>/dev/null || true)
+fi
+DS="${PROJECT_ID}.${DATASET}"
+
+echo "Ensuring dataset $DS in $LOCATION ..."
+if ! bq --location="$LOCATION" show "$DS" >/dev/null 2>&1; then
+  bq --location="$LOCATION" mk --dataset "$DS"
+fi
+
+echo "Ensuring table ${DS}.raw_records_stg exists (single JSON column 'raw') and loading NDJSON files from $GCS_GLOB"
+# Create a stable single-column staging table if it doesn't exist. This avoids BigQuery
+# schema autodetection creating many incompatible tables when resource shapes vary.
+if ! bq --location="$LOCATION" show "${DS}.raw_records_stg" >/dev/null 2>&1; then
+  echo "Creating table ${DS}.raw_records_stg with schema raw:JSON"
+  bq --location="$LOCATION" mk --table "${DS}.raw_records_stg" raw:JSON
+fi
+
+# Load into the explicit JSON column (no --autodetect). This expects NDJSON where
+# each line is a JSON object representing a single resource; we recommend wrapping
+# full bundles into {"raw": <resource>} prior to load if needed.
+bq --location="$LOCATION" load --source_format=NEWLINE_DELIMITED_JSON --replace "${DS}.raw_records_stg" "$GCS_GLOB" raw:JSON
+
+echo "Done. If load failed, inspect BigQuery job errors and consider splitting the NDJSON into smaller files for isolation."
+
+exit 0
