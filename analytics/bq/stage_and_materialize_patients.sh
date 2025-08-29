@@ -45,16 +45,17 @@ fi
 
 GLOB="gs://${BUCKET}/${PREFIX}/*.ndjson"
 DS="${PROJECT}.${DATASET}"
+FULL_DS="${PROJECT}:${DATASET}"
 
 echo "1) Ensure dataset exists: ${DS} in ${LOCATION}"
-if ! bq --location="$LOCATION" show "${DS}" >/dev/null 2>&1; then
+if ! bq --location="$LOCATION" show "${FULL_DS}" >/dev/null 2>&1; then
   echo "Creating dataset ${DS}..."
-  bq --location="$LOCATION" mk --dataset "${DS}"
+  bq --location="$LOCATION" mk --dataset "${FULL_DS}"
 fi
 
 echo "2) Ensure staging table ${DS}.raw_records_stg exists (single column raw:JSON)"
-if ! bq --location="$LOCATION" show "${DS}.raw_records_stg" >/dev/null 2>&1; then
-  bq --location="$LOCATION" mk --table "${DS}.raw_records_stg" raw:JSON
+if ! bq --location="$LOCATION" show "${FULL_DS}.raw_records_stg" >/dev/null 2>&1; then
+  bq --location="$LOCATION" mk --table "${FULL_DS}.raw_records_stg" raw:JSON
 fi
 
 # Helpful quick check (prints first line of one NDJSON object) - change sample file name if you want
@@ -64,17 +65,17 @@ echo "  gsutil cat ${GLOB} | head -n1"
 echo "3) Loading NDJSON files from ${GLOB} into ${DS}.raw_records_stg (mode=${MODE})"
 if [[ "$MODE" == "replace" ]]; then
   echo "Running bq load --replace ..."
-  bq --location="$LOCATION" load --source_format=NEWLINE_DELIMITED_JSON --replace "${DS}.raw_records_stg" "$GLOB" raw:JSON
+  bq --location="$LOCATION" load --source_format=NEWLINE_DELIMITED_JSON --replace "${FULL_DS}.raw_records_stg" "$GLOB" raw:JSON
 else
   echo "Running bq load (append) ..."
-  bq --location="$LOCATION" load --source_format=NEWLINE_DELIMITED_JSON "${DS}.raw_records_stg" "$GLOB" raw:JSON
+  bq --location="$LOCATION" load --source_format=NEWLINE_DELIMITED_JSON "${FULL_DS}.raw_records_stg" "$GLOB" raw:JSON
 fi
 
 echo "Load submitted — check BigQuery job output for errors if any."
 
 echo "4) Materialize patients table from staging"
-cat <<'SQL' > /tmp/materialize_patients.sql
-CREATE OR REPLACE TABLE `${PROJECT}.${DATASET}.patients` AS
+cat <<SQL > /tmp/materialize_patients.sql
+CREATE OR REPLACE TABLE ${PROJECT}.${DATASET}.patients AS
 SELECT
   COALESCE(JSON_EXTRACT_SCALAR(raw, '$.id'), JSON_EXTRACT_SCALAR(raw, '$.raw.id')) AS patient_id,
   COALESCE(JSON_EXTRACT_SCALAR(raw, '$.gender'), JSON_EXTRACT_SCALAR(raw, '$.raw.gender')) AS gender,
@@ -82,7 +83,7 @@ SELECT
   COALESCE(JSON_EXTRACT_SCALAR(raw, '$.name[0].family'), JSON_EXTRACT_SCALAR(raw, '$.raw.name[0].family')) AS family_name,
   COALESCE(JSON_EXTRACT_SCALAR(raw, '$.address[0].city'), JSON_EXTRACT_SCALAR(raw, '$.raw.address[0].city')) AS city,
   raw AS raw
-FROM `${PROJECT}.${DATASET}.raw_records_stg`
+FROM ${PROJECT}.${DATASET}.raw_records_stg
 WHERE COALESCE(JSON_EXTRACT_SCALAR(raw, '$.resourceType'), JSON_EXTRACT_SCALAR(raw, '$.raw.resourceType')) = 'Patient';
 SQL
 

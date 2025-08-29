@@ -16,9 +16,6 @@ Straightforward pipeline (minimal steps, files listed)
    - Helpers inside script: `_convert_json_to_ndjson()` and `_upload_to_gcs()`
    - Behavior: creates a per-patient `<patient_####>.ndjson` and uploads it to `gs://<bucket>/<prefix>/`.
 
-3) Optional local cleaning/validation (recommended)
-   - Script: `analytics/scripts/validate_ndjson.py` (validates NDJSON lines)
-   - Script: `analytics/scripts/clean_and_upload_ndjson.sh` (re-serializes lines and uploads)
 
 4) Load NDJSON into BigQuery staging (explicit single JSON column)
    - Script: `analytics/bq/load_ndjson_from_gcs.sh`
