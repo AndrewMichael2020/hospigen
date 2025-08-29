@@ -1,8 +1,9 @@
 # Analytics pipeline (BigQuery)
 
-This folder contains a lightweight, FHIR-free pipeline to load Synthea CSV exports into BigQuery for fast analytics.
+This folder contains a lightweight, FHIR-free pipeline to load Synthea CSV exports into BigQuery for fast analytics, as well as tools to generate synthetic patient data locally.
 
 What it does:
+- **Patient Generation**: Generate synthetic patients for Greater Vancouver Area as JSON files
 - Stages Synthea CSVs to GCS.
 - Loads into BigQuery staging tables using autodetect.
 - Materializes partitioned/clustered analytical tables via CTAS.
@@ -11,6 +12,26 @@ What it does:
 You can run end-to-end with one script if you already have local CSVs from Synthea.
 
 ## Quick start
+
+### Generate Vancouver Patients (NEW)
+
+To generate 1,000 synthetic patients for the Greater Vancouver Area as JSON files:
+
+```bash
+cd analytics
+./run_generator.sh
+```
+
+This will:
+- Download the Synthea JAR if needed
+- Clone the Synthea repository if needed  
+- Generate 1,000 patients across Vancouver, Burnaby, Surrey, and Richmond
+- Output JSON files to `analytics/output/`
+- Create a generation summary in `analytics/output/generation_summary.json`
+
+Prerequisites: Java 11+, Git, Python 3
+
+### BigQuery Pipeline
 
 Prereqs: gcloud, bq, gsutil installed and authenticated; `.env` containing PROJECT_ID and REGION (e.g., northamerica-northeast1).
 
