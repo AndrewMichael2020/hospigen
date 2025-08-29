@@ -1,54 +1,50 @@
 __pycache__/
-*.pyc
-.venv/
-env/
-.env
-
-# Local build artifacts and backups
-*.bak
-# *.jar
-*.pack
-*.idx
-
-# Common build / artifacts folders
-build/
+# Python / build
 __pycache__/
 *.pyc
 .venv/
 env/
 .env
 
+# Editor / OS files
+.DS_Store
+Thumbs.db
+
 # Local build artifacts and backups
 *.bak
+*.jar
+*.pack
 *.idx
 
 # Common build / artifacts folders
 build/
 downloads/
 
-# Application/output directories (local/generated files)
+# Local generated outputs
 output/
 output/fhir/
 analytics/test_output/
 
-# Synthea: keep source, but ignore tests and local artifacts
-# (we explicitly DO NOT ignore the `synthea/` source tree)
+# Keep Synthea source files but ignore tests and local artifacts
+# (do NOT ignore source CSVs or resources under synthea/*)
 **/src/test/
 **/test/
 **/tests/
 **/*Test.*
 
-# Synthea-specific local artifacts
-# synthea/downloads/
-# synthea/**/build/
-# synthea/**/libs/
+# Synthea: local artefacts / downloads / build outputs
+synthea/downloads/
+synthea/**/build/
+synthea/**/libs/
 
-# synthea_original: keep sources but ignore its internal git objects and build artifacts
-# synthea_original/.git/objects/
-# synthea_original/.git/objects/pack/
-# synthea_original/build/
-# synthea_original/build/libs/
+# Keep synthea_original source but ignore its internal git objects and build artifacts
+synthea_original/.git/objects/
+synthea_original/.git/objects/pack/
+synthea_original/build/
+synthea_original/build/libs/
 
-# Editor / OS files
-.DS_Store
-Thumbs.db
+# Keep other synthea-* source trees; ignore their internal git objects if present
+synthea-source/.git/objects/
+synthea-source/.git/objects/pack/
+synthea-international/.git/objects/
+synthea-international/.git/objects/pack/
