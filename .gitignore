@@ -6,4 +6,5 @@ env/
 
 # Synthea artifacts (local only)
 synthea/
+output/
 *.bak

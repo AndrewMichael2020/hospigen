@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Generate 1,000 synthetic patients for the Greater Vancouver Area, British Columbia.
-This script adapts the existing Synthea runner logic to generate patients locally
-without uploading to FHIR stores, placing the JSON output in analytics/output/
+This script uses Synthea to generate realistic patient data and then modifies the 
+location information to represent Vancouver area cities.
 """
 
 import os
@@ -10,6 +10,7 @@ import json
 import shlex
 import subprocess
 import urllib.request
+import random
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 
@@ -17,40 +18,62 @@ from typing import Dict, Any, List, Optional
 ROOT = Path(__file__).resolve().parents[1]  # One level up from analytics/
 SYN_DIR = ROOT / "synthea"
 DL_DIR = SYN_DIR / "downloads"
-RES_DIR = SYN_DIR / "src" / "main" / "resources"  # Standard Synthea location
 CFG_DIR = SYN_DIR / "config"
 OUT_DIR = ROOT / "analytics" / "output"  # Our target output directory
+TEMP_OUT_DIR = ROOT / "output"  # Synthea's actual output location
 
 JAR = DL_DIR / "synthea-with-dependencies.jar"
-PROP_FILE = CFG_DIR / "synthea-canada.properties"
+PROP_FILE = CFG_DIR / "synthea-vancouver.properties"
 
-# Greater Vancouver Area cities to generate patients for
-VANCOUVER_CITIES = [
-    "Vancouver",
-    "Burnaby", 
-    "Surrey",
-    "Richmond"
-]
+# Greater Vancouver Area cities and their postal code prefixes
+VANCOUVER_CITIES = {
+    "Vancouver": {"postal_prefix": "V5", "population_weight": 0.4},
+    "Burnaby": {"postal_prefix": "V3", "population_weight": 0.15}, 
+    "Surrey": {"postal_prefix": "V3", "population_weight": 0.25},
+    "Richmond": {"postal_prefix": "V6", "population_weight": 0.2}
+}
 
-class PatientGenConfig:
-    """Configuration for patient generation"""
-    def __init__(self,
-                 province: str = "British Columbia",
-                 cities: List[str] = None,
-                 total_count: int = 1000,
-                 seed: Optional[int] = None):
-        self.province = province
-        self.cities = cities or VANCOUVER_CITIES
+# Washington state cities we'll use as demographic models (similar climate/demographics to Vancouver)
+US_MODEL_CITIES = ["Seattle", "Bellevue", "Tacoma", "Spokane"]
+
+class VancouverPatientConfig:
+    """Configuration for Vancouver patient generation"""
+    def __init__(self, total_count: int = 1000, seed: Optional[int] = None):
         self.total_count = total_count
         self.seed = seed
-        self.patients_per_city = total_count // len(self.cities)
-        self.remainder = total_count % len(self.cities)
+        self.batches = self._create_batches()
+        
+    def _create_batches(self) -> List[Dict[str, Any]]:
+        """Create generation batches for different cities"""
+        batches = []
+        remaining = self.total_count
+        
+        for i, (vancouver_city, config) in enumerate(VANCOUVER_CITIES.items()):
+            # Calculate patients for this city based on population weight
+            if i == len(VANCOUVER_CITIES) - 1:  # Last city gets remainder
+                count = remaining
+            else:
+                count = int(self.total_count * config["population_weight"])
+                remaining -= count
+            
+            # Pick a US model city for demographics
+            us_city = US_MODEL_CITIES[i % len(US_MODEL_CITIES)]
+            
+            batches.append({
+                "vancouver_city": vancouver_city,
+                "us_model_city": us_city,
+                "count": count,
+                "postal_prefix": config["postal_prefix"],
+                "seed": self.seed + i if self.seed else None
+            })
+            
+        return batches
 
 
 def ensure_synthea_jar() -> None:
     """Download Synthea JAR if not present"""
     if JAR.exists():
-        print(f"Synthea JAR already exists: {JAR}")
+        print(f"✓ Synthea JAR exists: {JAR}")
         return
         
     JAR.parent.mkdir(parents=True, exist_ok=True)
@@ -58,110 +81,58 @@ def ensure_synthea_jar() -> None:
     jar_name = "synthea-with-dependencies.jar"
     url = f"https://github.com/synthetichealth/synthea/releases/download/{version}/{jar_name}"
     
-    print(f"Downloading Synthea JAR from {url} to {JAR}...")
+    print(f"Downloading Synthea JAR from {url}...")
     try:
         urllib.request.urlretrieve(url, str(JAR))
-        print(f"Successfully downloaded Synthea JAR to {JAR}")
+        print(f"✓ Downloaded Synthea JAR")
     except Exception as e:
         raise RuntimeError(f"Failed to download Synthea JAR: {e}")
-    
-    if not JAR.exists():
-        raise FileNotFoundError(f"Synthea JAR not found after download: {JAR}")
 
 
-def clone_synthea_repo() -> None:
-    """Clone Synthea repository if not present"""
-    if SYN_DIR.exists():
-        print(f"Synthea directory already exists: {SYN_DIR}")
-        return
-        
-    print(f"Cloning Synthea repository to {SYN_DIR}...")
-    try:
-        subprocess.check_call([
-            "git", "clone", 
-            "https://github.com/synthetichealth/synthea.git",
-            str(SYN_DIR)
-        ], cwd=str(ROOT))
-        print(f"Successfully cloned Synthea to {SYN_DIR}")
-    except subprocess.CalledProcessError as e:
-        raise RuntimeError(f"Failed to clone Synthea repository: {e}")
-
-
-def ensure_canada_config() -> None:
-    """Ensure Synthea Canada configuration exists"""
+def ensure_synthea_config() -> None:
+    """Create Synthea configuration optimized for our use case"""
     CFG_DIR.mkdir(parents=True, exist_ok=True)
     
-    if PROP_FILE.exists():
-        print(f"Canada config already exists: {PROP_FILE}")
-        return
-    
-    # Create basic Canada configuration
-    config_content = """# Synthea Canada Configuration
+    config_content = """# Synthea Configuration for Vancouver Patient Generation
 exporter.fhir.export = true
 exporter.csv.export = false
 exporter.text.export = false
 exporter.cdw.export = false
 exporter.ccda.export = false
 
-# Use Canadian geography
-generate.geography.international = true
-generate.geography.country_code = CA
-
-# Demographics
-generate.demographics.default_file = demographics_ca.csv
-generate.providers.default_file = providers_ca.csv
-generate.payers.default_file = payers_ca.csv
-
-# Patient count and demographics
+# Performance settings
 generate.default_population = 1000
+generate.log_patients.detail = false
 
-# Reduce verbosity
+# Output settings  
 exporter.baseDirectory = ./output
 """
     
     with open(PROP_FILE, 'w') as f:
         f.write(config_content)
-    print(f"Created Canada configuration: {PROP_FILE}")
+    print(f"✓ Created configuration: {PROP_FILE}")
 
 
-def run_synthea_for_city(city: str, count: int, seed: Optional[int] = None) -> Path:
-    """Run Synthea for a specific city and return output directory"""
-    print(f"\nGenerating {count} patients for {city}, British Columbia...")
-    
-    # Create temporary output directory for this city
-    city_out_dir = SYN_DIR / "output" / "fhir"
-    
-    # Java options for Canadian geography
-    java_opts = [
-        f"-Dexporter.baseDirectory={SYN_DIR / 'output'}",
-        "-Dgenerate.geography.country_code=CA",
-        "-Dgenerate.geography.international=true"
-    ]
-    
-    # Check if we have local Canadian geography
-    geo_dir = RES_DIR / 'geography'
-    if geo_dir.exists():
-        java_opts.append(f"-Dgenerate.geography.directory={geo_dir}")
-        print(f"Using local geography dir: {geo_dir}")
-    else:
-        print("Using built-in Synthea geography for Canada")
+def run_synthea_batch(batch: Dict[str, Any]) -> Path:
+    """Run Synthea for a batch of patients"""
+    print(f"\nGenerating {batch['count']} patients using {batch['us_model_city']} demographics...")
     
     # Synthea command arguments
     args = [
         "-c", str(PROP_FILE),
-        "-p", str(count),
+        "-p", str(batch['count']),
     ]
     
-    if seed is not None:
-        args += ["-s", str(seed)]
+    if batch['seed'] is not None:
+        args += ["-s", str(batch['seed'])]
     
-    # Add province and city
-    args += ["British Columbia", city]
+    # Use Washington state and model city for demographics
+    args += ["Washington", batch['us_model_city']]
     
     # Full command
     cmd = [
         "java",
-        *java_opts,
+        f"-Dexporter.baseDirectory={ROOT}",
         "-jar", str(JAR),
         *args,
     ]
@@ -169,116 +140,170 @@ def run_synthea_for_city(city: str, count: int, seed: Optional[int] = None) -> P
     print("Running:", " ".join(shlex.quote(x) for x in cmd))
     
     try:
+        # Clean output directory first
+        if TEMP_OUT_DIR.exists():
+            import shutil
+            shutil.rmtree(TEMP_OUT_DIR)
+            
         subprocess.check_call(cmd, cwd=str(ROOT))
-        return city_out_dir
+        return TEMP_OUT_DIR / "fhir"
     except subprocess.CalledProcessError as e:
-        print(f"Synthea failed for {city} (exit {e.returncode}). Retrying with province only...")
-        
-        # Retry with province only
-        retry_args = [
-            "java",
-            *java_opts,
-            "-jar", str(JAR),
-            "-c", str(PROP_FILE),
-            "-p", str(count)
-        ]
-        if seed is not None:
-            retry_args += ["-s", str(seed)]
-        retry_args += ["British Columbia"]
-        
-        print("Running (fallback):", " ".join(shlex.quote(x) for x in retry_args))
-        subprocess.check_call(retry_args, cwd=str(ROOT))
-        return city_out_dir
+        raise RuntimeError(f"Synthea failed for batch {batch}: {e}")
 
 
-def collect_and_organize_output(config: PatientGenConfig) -> Dict[str, Any]:
-    """Collect all generated JSON files and organize them in analytics/output"""
+def modify_patient_location(patient_data: Dict[str, Any], vancouver_city: str, postal_prefix: str) -> Dict[str, Any]:
+    """Modify patient bundle to use Vancouver location data"""
+    modified = patient_data.copy()
+    
+    # Generate a realistic Vancouver postal code
+    postal_code = f"{postal_prefix}{random.randint(1,9)}{random.choice('ABCDEFGHIJKLMNOPQRSTUVWXYZ')}{random.randint(1,9)}"
+    
+    # Modify all entries in the bundle
+    if "entry" in modified:
+        for entry in modified["entry"]:
+            if "resource" in entry:
+                resource = entry["resource"]
+                
+                # Update Patient resources
+                if resource.get("resourceType") == "Patient":
+                    if "address" in resource:
+                        for address in resource["address"]:
+                            address["city"] = vancouver_city
+                            address["state"] = "British Columbia"
+                            address["country"] = "CA"
+                            address["postalCode"] = postal_code
+                
+                # Update addresses in other resources (Encounter, Organization, etc.)
+                if "address" in resource:
+                    if isinstance(resource["address"], list):
+                        for address in resource["address"]:
+                            address["city"] = vancouver_city
+                            address["state"] = "British Columbia"
+                            address["country"] = "CA"
+                    elif isinstance(resource["address"], dict):
+                        address = resource["address"]
+                        address["city"] = vancouver_city
+                        address["state"] = "British Columbia"
+                        address["country"] = "CA"
+                
+                # Update Organization/Provider locations
+                if resource.get("resourceType") in ["Organization", "Practitioner"]:
+                    if "address" in resource:
+                        for address in resource["address"]:
+                            address["city"] = vancouver_city
+                            address["state"] = "British Columbia"
+                            address["country"] = "CA"
+    
+    return modified
+
+
+def process_and_organize_output(config: VancouverPatientConfig) -> Dict[str, Any]:
+    """Process all generated files and organize them in analytics/output"""
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     
-    total_files = 0
     results = {
-        "total_patients": config.total_count,
-        "cities_generated": [],
+        "total_patients_requested": config.total_count,
+        "batches_processed": [],
         "output_directory": str(OUT_DIR),
-        "json_files": []
+        "vancouver_patients": []
     }
     
-    # Find all JSON files in Synthea output
-    synthea_output = SYN_DIR / "output" / "fhir"
-    if synthea_output.exists():
-        json_files = list(synthea_output.glob("*.json"))
+    patient_count = 0
+    
+    for batch in config.batches:
+        print(f"\nProcessing batch for {batch['vancouver_city']}...")
         
-        for i, json_file in enumerate(json_files):
-            # Copy to analytics output with organized naming
-            target_name = f"patient_{i+1:04d}.json"
-            target_path = OUT_DIR / target_name
+        # Run Synthea for this batch
+        fhir_output_dir = run_synthea_batch(batch)
+        
+        # Process the generated files
+        if fhir_output_dir.exists():
+            json_files = list(fhir_output_dir.glob("*.json"))
+            patient_files = [f for f in json_files if not f.name.startswith(('practitioner', 'hospital'))]
             
-            # Read and copy the JSON file
-            with open(json_file, 'r') as src:
-                content = json.load(src)
+            batch_results = {
+                "vancouver_city": batch['vancouver_city'],
+                "us_model_city": batch['us_model_city'],
+                "requested_count": batch['count'],
+                "files_generated": len(patient_files),
+                "files": []
+            }
             
-            with open(target_path, 'w') as dst:
-                json.dump(content, dst, indent=2)
+            for json_file in patient_files:
+                patient_count += 1
+                target_name = f"vancouver_patient_{patient_count:04d}_{batch['vancouver_city'].lower()}.json"
+                target_path = OUT_DIR / target_name
+                
+                # Load, modify, and save the patient data
+                with open(json_file, 'r') as f:
+                    patient_data = json.load(f)
+                
+                # Modify location data to Vancouver
+                modified_data = modify_patient_location(
+                    patient_data, 
+                    batch['vancouver_city'], 
+                    batch['postal_prefix']
+                )
+                
+                # Save to analytics output
+                with open(target_path, 'w') as f:
+                    json.dump(modified_data, f, indent=2)
+                
+                batch_results["files"].append(target_name)
+                results["vancouver_patients"].append({
+                    "file": target_name,
+                    "city": batch['vancouver_city'],
+                    "patient_number": patient_count
+                })
             
-            results["json_files"].append(target_name)
-            total_files += 1
+            results["batches_processed"].append(batch_results)
+            print(f"✓ Processed {len(patient_files)} patients for {batch['vancouver_city']}")
     
-    results["total_files_generated"] = total_files
-    print(f"\nGenerated {total_files} patient JSON files in {OUT_DIR}")
-    
+    results["total_patients_generated"] = patient_count
     return results
 
 
 def generate_vancouver_patients() -> Dict[str, Any]:
     """Main function to generate Vancouver area patients"""
-    print("=== Generating 1,000 Patients for Greater Vancouver Area ===")
+    print("=== Vancouver Patient Generator ===")
+    print("Generating 1,000 synthetic patients for Greater Vancouver Area, BC")
+    print("Cities: Vancouver, Burnaby, Surrey, Richmond")
+    print("Using Washington state demographics as a model\n")
     
-    config = PatientGenConfig(
-        province="British Columbia",
-        cities=VANCOUVER_CITIES,
-        total_count=1000,
-        seed=42  # For reproducible results
-    )
-    
-    print(f"Configuration:")
-    print(f"  Province: {config.province}")
-    print(f"  Cities: {', '.join(config.cities)}")
-    print(f"  Total patients: {config.total_count}")
-    print(f"  Patients per city: ~{config.patients_per_city}")
+    config = VancouverPatientConfig(total_count=1000, seed=42)
     
     # Setup
     ensure_synthea_jar()
-    clone_synthea_repo()
-    ensure_canada_config()
+    ensure_synthea_config()
     
-    # Generate patients for each city
-    for i, city in enumerate(config.cities):
-        count = config.patients_per_city
-        # Add remainder to first city
-        if i == 0:
-            count += config.remainder
-            
-        seed = config.seed + i if config.seed else None
-        run_synthea_for_city(city, count, seed)
+    # Generate and process patients
+    results = process_and_organize_output(config)
     
-    # Collect and organize results
-    return collect_and_organize_output(config)
+    # Save generation summary
+    summary_file = OUT_DIR / "vancouver_generation_summary.json"
+    with open(summary_file, 'w') as f:
+        json.dump(results, f, indent=2)
+    
+    return results
 
 
 if __name__ == "__main__":
     try:
+        print("Starting Vancouver patient data generation...\n")
         results = generate_vancouver_patients()
         
-        # Save generation summary
-        summary_file = OUT_DIR / "generation_summary.json"
-        with open(summary_file, 'w') as f:
-            json.dump(results, f, indent=2)
-        
         print(f"\n=== Generation Complete ===")
-        print(f"Generated {results['total_files_generated']} patient JSON files")
-        print(f"Output directory: {results['output_directory']}")
-        print(f"Summary saved to: {summary_file}")
+        print(f"✓ Generated {results['total_patients_generated']} patient JSON files")
+        print(f"✓ Output directory: {results['output_directory']}")
+        print(f"✓ Summary: {OUT_DIR}/vancouver_generation_summary.json")
+        
+        # Show breakdown by city
+        print(f"\nBreakdown by Vancouver area city:")
+        for batch in results['batches_processed']:
+            print(f"  {batch['vancouver_city']}: {batch['files_generated']} patients")
+        
+        print(f"\nPatient files are ready for analysis!")
         
     except Exception as e:
-        print(f"Error generating patients: {e}")
+        print(f"❌ Error generating patients: {e}")
         raise
