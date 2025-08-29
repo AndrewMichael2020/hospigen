@@ -58,3 +58,16 @@ Outputs:
 - Example features: features_ed_7d
 
 Note: This pipeline doesn’t touch the Cloud Run FHIR components.
+
+### To package and start:
+
+cd /workspaces/hospigen && echo '--- java ---' && java -version 2>&1 | sed -n '1,3p' || true && echo '\n--- gsutil ---' && which gsutil || true && gsutil version -h 2>&1 | sed -n '1,2p' || true && echo '\n--- bq ---' && which bq || true && bq --version 2>&1 | sed -n '1,2p' || true && echo '\n--- gcloud ---' && which gcloud || true && gcloud --version 2>&1 | sed -n '1,3p' || true && echo '\n--- synthea JAR ---' && ls -lh synthea_original/build/libs/synthea-with-dependencies.jar || true && echo '\n--- synthea downloads ---' && ls -lh synthea/downloads | sed -n '1,200p' || true
+
+set -a; source .env; set +a
+
+python3 analytics/generate_and_upload_bq.py \
+  --total 500 \
+  --batch-size 100 \
+  --bucket "$GCS_BUCKET" \
+  --project "$GCP_PROJECT" \
+  --seed 123
