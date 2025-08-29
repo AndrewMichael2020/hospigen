@@ -15,6 +15,7 @@ Thumbs.db
 *.jar
 *.pack
 *.idx
+*.jar 
 
 # Common build / artifacts folders
 build/

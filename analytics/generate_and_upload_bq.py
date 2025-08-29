@@ -3,7 +3,7 @@
 
 Usage: python analytics/generate_and_upload_bq.py --bucket my-bucket --dataset mydataset --table mytable
 
-The script will generate 10_000 patients by default, in batches of 500, distributed across
+The script will generate 10_000 patients by default, in batches of 100, distributed across
 Surrey (50%), New Westminster (20%), Langley (30% combined assumed from duplicate entries).
 
 Requirements: java, gcloud/gsutil, bq (Cloud SDK). The script calls the local synthea JAR and uses
@@ -105,7 +105,12 @@ def patch_addresses_and_collect(fhir_dir: Path, city: str):
 
 
 def upload_to_gcs(local_path: Path, bucket: str, gcs_path: str):
-    gsuri = f"gs://{bucket}/{gcs_path}"
+    # accept bucket with or without gs:// prefix
+    if bucket.startswith("gs://"):
+        bucket_name = bucket[len("gs://"):]
+    else:
+        bucket_name = bucket
+    gsuri = f"gs://{bucket_name}/{gcs_path}"
     print(f"Uploading {local_path} -> {gsuri}")
     subprocess.check_call(["gsutil", "cp", str(local_path), gsuri])
     return gsuri
@@ -129,8 +134,8 @@ def list_buckets(project: Optional[str]) -> list:
         return [l.strip() for l in out.splitlines() if l.strip()]
     try:
         out = subprocess.check_output(args, text=True)
-        # gsutil ls prints gs://bucket/
-        return [l.replace("gs://", "").rstrip('/') for l in out.splitlines() if l.strip()]
+        # gsutil ls prints gs:/bucket/
+        return [l.replace("gs:/", "").rstrip('/') for l in out.splitlines() if l.strip()]
     except subprocess.CalledProcessError:
         return []
 
@@ -138,18 +143,22 @@ def list_buckets(project: Optional[str]) -> list:
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Generate patients and upload batches to BigQuery via GCS")
     parser.add_argument("--total", type=int, default=10000)
-    parser.add_argument("--batch-size", type=int, default=500)
-    parser.add_argument("--bucket", type=str, required=True, help="GCS bucket name to use (no gs:// prefix)")
-    parser.add_argument("--gcs-prefix", type=str, default="synthea_batches", help="Path prefix inside the bucket")
-    parser.add_argument("--dataset", type=str, required=True, help="BigQuery dataset")
-    parser.add_argument("--table", type=str, required=True, help="BigQuery table name")
+    parser.add_argument("--batch-size", type=int, default=100)
+    parser.add_argument("--bucket", type=str, required=True, help="GCS bucket name to use (no gs:/ prefix)")
+    parser.add_argument("--gcs-prefix", type=str, default="synthea_raw", help="Path prefix inside the bucket")
+    parser.add_argument("--dataset", type=str, required=False, help="BigQuery dataset (not required with --skip-load)")
+    parser.add_argument("--table", type=str, required=False, help="BigQuery table name (not required with --skip-load)")
+    parser.add_argument("--skip-load", action="store_true", help="Upload to GCS only; skip loading into BigQuery")
     parser.add_argument("--project", type=str, default=None, help="GCP project id (optional)")
     parser.add_argument("--build-if-missing", action="store_true")
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args(argv)
 
-    # Commands required
-    for cmd in ("java", "gsutil", "bq", "gcloud"):
+    # Commands required: always need java + gsutil; require bq/gcloud only when not skipping load
+    required_cmds = ["java", "gsutil"]
+    if not args.skip_load:
+        required_cmds += ["bq", "gcloud"]
+    for cmd in required_cmds:
         require_cmd(cmd)
 
     if not JAR.exists():
@@ -219,7 +228,10 @@ def main(argv=None):
         # upload to GCS and load into BigQuery
         gcs_path = f"{args.gcs_prefix}/batch_{b+1:04d}.ndjson"
         gsuri = upload_to_gcs(batch_file, args.bucket, gcs_path)
-        load_into_bq(f"gs://{args.bucket}/{gcs_path}", args.dataset, args.table, args.project)
+        if not args.skip_load:
+            if not args.dataset or not args.table:
+                raise RuntimeError("dataset and table are required unless --skip-load is used")
+            load_into_bq(gsuri, args.dataset, args.table, args.project)
 
         # delete local batch file
         try:
