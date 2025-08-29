@@ -27,10 +27,13 @@ fi
 IMAGE="gcr.io/${PROJECT_ID}/synthea-runner:vancouver-100k"
 JOB_NAME="synthea-runner-vancouver-100k"
 
-echo "Deploying Synthea runner for 100K patients in Greater Vancouver Area, BC"
-echo "Target: Vancouver, British Columbia"
+echo "=========================================="
+echo "Deploying Synthea runner for 100K patients"
+echo "Target: Greater Vancouver Area (via Seattle hybrid approach)"
 echo "Count: 100,000 patients"
 echo "Output: CSV + FHIR"
+echo "Approach: Using Seattle, WA geography for Vancouver-area demographics"
+echo "=========================================="
 
 # Ensure APIs
 gcloud services enable run.googleapis.com cloudbuild.googleapis.com healthcare.googleapis.com --project "$PROJECT_ID"
@@ -57,7 +60,7 @@ gcloud run jobs create "$JOB_NAME" \
   --max-retries=1 \
   --task-timeout=7200s \
   --parallelism=1 \
-  --set-env-vars 'MODE=job,FHIR_STORE='"${STORE_ID_PATH}"',COUNTRY=CA,PROVINCE=BC,CITY=Vancouver,COUNT=100000,MAX_QPS=5,DRY_RUN=false,SEED=42'
+  --set-env-vars 'MODE=job,FHIR_STORE='"${STORE_ID_PATH}"',COUNTRY=US,PROVINCE=Washington,CITY=Seattle,COUNT=100000,MAX_QPS=5,DRY_RUN=false,SEED=2024'
 
 # Grant Healthcare role to default compute SA (best-effort)
 echo "Setting up permissions..."

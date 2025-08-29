@@ -4,6 +4,12 @@ __pycache__/
 env/
 .env
 
-# Synthea artifacts (local only)
-synthea/
+# Synthea artifacts (local only) - but keep config
+synthea/output/
+synthea/downloads/
+synthea/resources/
+output/
 *.bak
+
+# Test artifacts
+.pytest_cache/
