@@ -55,11 +55,27 @@ load_stg() {
   local tbl="$1"; shift
   local uri="$1"; shift
   echo "Loading staging table ${DS}.${tbl}_stg from $uri ..."
+  # NOTE: this loader is for CSV-style Synthea exports. For NDJSON (per-resource
+  # JSON lines) use the load_ndjson_stg helper added below or the separate
+  # analytics/bq/load_ndjson_from_gcs.sh script.
   bq --location="$LOCATION" load \
      --source_format=CSV \
      --skip_leading_rows=1 \
      --allow_quoted_newlines \
      --allow_jagged_rows \
+     --autodetect \
+     "${DS}.${tbl}_stg" \
+     "$uri"
+}
+
+# Load newline-delimited JSON (NDJSON) into a staging table. Use this for
+# files produced by the extractor/cloud-function under processed_resources/*.ndjson
+load_ndjson_stg() {
+  local tbl="$1"; shift
+  local uri="$1"; shift
+  echo "Loading NDJSON staging table ${DS}.${tbl}_stg from $uri ..."
+  bq --location="$LOCATION" load \
+     --source_format=NEWLINE_DELIMITED_JSON \
      --autodetect \
      "${DS}.${tbl}_stg" \
      "$uri"
