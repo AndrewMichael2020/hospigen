@@ -8,7 +8,7 @@ Overview
 
 High-level pipeline
 1. Generate patients with Synthea (fat JAR) in batches.
-2. For each generated patient JSON bundle, convert to NDJSON (one resource per line) or optionally wrap the entire bundle.
+2. For each generated patient JSON bundle, convert to NDJSON (one resource per line). We generate and upload one NDJSON file per patient (no large batch bundle files).
 3. Upload per-patient NDJSON files to GCS under a stable prefix (e.g., `gs://<bucket>/patients/`).
 4. Load NDJSON into BigQuery into a single-column staging table `raw_records_stg` (raw:JSON) to avoid schema autodetection issues.
 5. Transform `raw_records_stg` into normalized staging/flat tables (patients, observations, encounters, claims, etc.) via SQL.
