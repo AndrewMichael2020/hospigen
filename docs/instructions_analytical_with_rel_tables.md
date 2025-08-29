@@ -80,9 +80,10 @@ Run in shards (100k per run, scalable):
 ---
 
 ### Step 2: Stage Data to Cloud Storage
+Use Montreal region `northamerica-northeast1` (adjust if needed):
 ```bash
-gsutil mb -l northamerica-northeast1 gs://lm-synth-raw-$PROJECT_ID
-gsutil -m cp -r ./output/csv/run_*/ gs://lm-synth-raw-$PROJECT_ID/
+gsutil mb -l northamerica-northeast1 gs://synthea-raw-$PROJECT_ID
+gsutil -m cp -r ./output/csv/run_*/ gs://synthea-raw-$PROJECT_ID/
 ```
 
 ---
@@ -94,32 +95,15 @@ bq --location=northamerica-northeast1 mk --dataset hc_demo
 
 ---
 
-### Step 4: Load Core Tables
-Encounters (partitioned + clustered):
+### Step 4: Load via staging then CTAS (safer)
+To avoid header name mismatches and get proper partitioning, load into staging with autodetect, then create final tables with CTAS. Use the helper script:
 ```bash
-bq load --location=northamerica-northeast1   --source_format=CSV --autodetect   --time_partitioning_field=START   --clustering_fields=PATIENT,CLASS,ENCOUNTERCLASS   hc_demo.encounters   "gs://lm-synth-raw-$PROJECT_ID/run_*/encounters.csv"
+./analytics/bq/load_from_gcs.sh \
+  --dataset hc_demo \
+  --gcs "gs://synthea-raw-$PROJECT_ID/run_*"
 ```
 
-Other entities:
-```bash
-for t in patients organizations providers conditions procedures medications immunizations allergies careplans claims imaging_studies devices; do
-  bq load --location=northamerica-northeast1     --source_format=CSV --autodetect     hc_demo.$t "gs://lm-synth-raw-$PROJECT_ID/run_*/$t.csv"
-done
-```
-
-Observations (partitioned + clustered):
-```bash
-bq load --location=northamerica-northeast1   --source_format=CSV --autodetect   --time_partitioning_field=DATE   --clustering_fields=PATIENT,CODE   hc_demo.observations "gs://lm-synth-raw-$PROJECT_ID/run_*/observations.csv"
-```
-
-Labs-only table:
-```sql
-CREATE OR REPLACE TABLE hc_demo.observations_lab
-PARTITION BY DATE
-CLUSTER BY PATIENT, CODE AS
-SELECT * FROM hc_demo.observations
-WHERE CATEGORY = "laboratory";
-```
+This script also creates a labs-only table and the ED/PC views.
 
 ---
 

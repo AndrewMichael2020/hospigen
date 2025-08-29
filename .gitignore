@@ -6,3 +6,4 @@ env/
 
 # Synthea artifacts (local only)
 synthea/
+*.bak
