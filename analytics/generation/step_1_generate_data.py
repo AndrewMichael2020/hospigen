@@ -1,16 +1,9 @@
 #!/usr/bin/env python3
-"""Generate and extract 500 Vancouver (BC) patients using synthea_original.
+"""Generate and extract Vancouver patients (step 1).
 
-This script follows the lessons in docs/LESSONS_LEARNED_SYNTHEA_CA.md:
-- Uses the `synthea_original` codebase (build/libs/synthea-with-dependencies.jar)
-- Builds the fat JAR if missing (via the included Gradle wrapper)
-- Attempts to run directly with "British Columbia" "Vancouver" and falls back
-  to a US model city if the demographics are missing.
-
-Notes:
-- Generating 500 patients can take several minutes and requires Java & Gradle.
-- For CI or quick checks set --total to a small number or run tests with
-  RUN_SYNTHETHEA=1 to enable the full generation test.
+This is a thin rename of the original `extract_vancouver_500.py` to
+`step_1_generate_data.py` and lives under `analytics/generation` so the
+full pipeline can call it as `analytics/generation/step_1_generate_data.py`.
 """
 from __future__ import annotations
 
@@ -26,7 +19,7 @@ from pathlib import Path
 from typing import Optional
 from datetime import datetime
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 SYN_ORIG = ROOT / "synthea_original"
 JAR = SYN_ORIG / "build" / "libs" / "synthea-with-dependencies.jar"
 PROP = SYN_ORIG / "src" / "main" / "resources" / "synthea.properties"
@@ -68,7 +61,7 @@ def run_synthea(patients: int, seed: Optional[int]) -> Path:
     if seed is not None:
         args = ["-s", str(seed)] + args
 
-    # primary attempt: British Columbia / Vancouver (synthea_original should be hardened per lessons)
+    # primary attempt: British Columbia / Vancouver
     primary_cmd = ["java", f"-Dexporter.baseDirectory={ROOT}", "-jar", str(JAR), *args, "British Columbia", "Vancouver"]
     fallback_cmd = ["java", f"-Dexporter.baseDirectory={ROOT}", "-jar", str(JAR), *args, "Washington", "Seattle"]
 
@@ -229,7 +222,7 @@ def main(argv=None):
     parser.add_argument("--gcs-bucket", type=str, default="synthea-raw-hospigen", help="GCS bucket to upload per-patient NDJSON files to")
     parser.add_argument("--gcs-prefix", type=str, default="patients", help="GCS prefix (folder) under the bucket to upload files to")
     parser.add_argument("--delete-local", action="store_true", help="Delete per-patient JSON files locally after successful upload")
-    parser.add_argument("--stage", action="store_true", help="After generation/upload, run analytics/stage_and_materialize_patients.sh to load into BigQuery")
+    parser.add_argument("--stage", action="store_true", help="After generation/upload, run analytics/generation/step_3_materialize_tables.sh to load into BigQuery")
     args = parser.parse_args(argv)
 
     out_dir = ROOT / args.out_dir
@@ -317,7 +310,7 @@ def main(argv=None):
 
     # If requested, run the staging + materialize script to load GCS NDJSON into BigQuery
     if args.stage:
-        stage_script = ROOT / "analytics" / "stage_and_materialize_patients.sh"
+        stage_script = ROOT / "analytics" / "generation" / "step_3_materialize_tables.sh"
         if not stage_script.exists():
             print(f"Stage script not found: {stage_script}", file=sys.stderr)
             return

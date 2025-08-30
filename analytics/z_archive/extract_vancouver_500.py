@@ -24,8 +24,9 @@ import sys
 import time
 from pathlib import Path
 from typing import Optional
+from datetime import datetime
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[1]
 SYN_ORIG = ROOT / "synthea_original"
 JAR = SYN_ORIG / "build" / "libs" / "synthea-with-dependencies.jar"
 PROP = SYN_ORIG / "src" / "main" / "resources" / "synthea.properties"
@@ -116,6 +117,16 @@ def modify_and_copy(
                 res = entry.get("resource")
                 if not res:
                     continue
+                # attach a generated timestamp to each resource if not present
+                try:
+                    gen_ts = datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+                    if isinstance(res, dict):
+                        res.setdefault("meta", {})
+                        if "generated" not in res.get("meta", {}):
+                            res["meta"]["generated"] = gen_ts
+                except Exception:
+                    # never fail generation because of metadata writing
+                    pass
                 if "address" in res:
                     if isinstance(res["address"], list):
                         for addr in res["address"]:
@@ -137,8 +148,8 @@ def modify_and_copy(
         if upload and gcs_bucket:
             nd_name = out_file.with_suffix('.ndjson')
             try:
-                # create wrapped NDJSON lines: {"raw": <resource>}
-                _convert_json_to_ndjson(out_file, nd_name, wrap=True)
+                # create NDJSON lines: one resource JSON per line
+                _convert_json_to_ndjson(out_file, nd_name)
             except Exception as e:
                 print(f"Failed to convert {out_file} -> {nd_name}: {e}", file=sys.stderr)
             else:
@@ -218,6 +229,7 @@ def main(argv=None):
     parser.add_argument("--gcs-bucket", type=str, default="synthea-raw-hospigen", help="GCS bucket to upload per-patient NDJSON files to")
     parser.add_argument("--gcs-prefix", type=str, default="patients", help="GCS prefix (folder) under the bucket to upload files to")
     parser.add_argument("--delete-local", action="store_true", help="Delete per-patient JSON files locally after successful upload")
+    parser.add_argument("--stage", action="store_true", help="After generation/upload, run analytics/stage_and_materialize_patients.sh to load into BigQuery")
     args = parser.parse_args(argv)
 
     out_dir = ROOT / args.out_dir
@@ -302,6 +314,22 @@ def main(argv=None):
                 print(f"Failed to upload {nd_local} to GCS: {e}", file=sys.stderr)
                 continue
             print(f"Uploaded {nd_local.name} ({lines} lines) to gs://{args.gcs_bucket}/{args.gcs_prefix}/")
+
+    # If requested, run the staging + materialize script to load GCS NDJSON into BigQuery
+    if args.stage:
+        stage_script = ROOT / "analytics" / "stage_and_materialize_patients.sh"
+        if not stage_script.exists():
+            print(f"Stage script not found: {stage_script}", file=sys.stderr)
+            return
+        cmd = ["bash", str(stage_script), "--bucket", args.gcs_bucket, "--prefix", args.gcs_prefix]
+        # pass project if set in environment to the script
+        if proj := os.environ.get("PROJECT_ID") or os.environ.get("GOOGLE_CLOUD_PROJECT"):
+            cmd += ["--project", proj]
+        print("Running BigQuery staging/materialize:", " ".join(cmd))
+        try:
+            subprocess.check_call(cmd)
+        except subprocess.CalledProcessError as e:
+            print(f"Staging/materialize failed: {e}", file=sys.stderr)
 
 
 if __name__ == "__main__":
