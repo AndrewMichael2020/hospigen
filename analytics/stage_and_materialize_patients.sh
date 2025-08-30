@@ -68,16 +68,28 @@ echo "  gsutil cat ${GLOB} | head -n1"
 if [[ "$SKIP_LOAD" == "true" ]]; then
   echo "SKIP_LOAD set: skipping bq load phase. Assuming staging table already contains files from gs://$BUCKET/$PREFIX"
 else
-  echo "3) Loading NDJSON files from ${GLOB} into ${DS}.raw_records_stg (mode=${MODE})"
-  if [[ "$MODE" == "replace" ]]; then
-    echo "Running bq load --replace ..."
-    bq --location="$LOCATION" load --source_format=NEWLINE_DELIMITED_JSON --replace "${FULL_DS}.raw_records_stg" "$GLOB" raw:JSON
+  echo "3) Loading NDJSON files from ${GLOB} into ${DS}.raw_records_stg (one file at a time)"
+
+  # list files and skip any already-wrapped files
+  FILES=$(gsutil ls "gs://${BUCKET}/${PREFIX}/*.ndjson" 2>/dev/null || true)
+  if [[ -z "$FILES" ]]; then
+    echo "No NDJSON files found at gs://${BUCKET}/${PREFIX}"
   else
-    echo "Running bq load (append) ..."
-    bq --location="$LOCATION" load --source_format=NEWLINE_DELIMITED_JSON "${FULL_DS}.raw_records_stg" "$GLOB" raw:JSON
+    for f in $FILES; do
+      # skip files that look already wrapped
+      if [[ "$f" == *-wrapped.ndjson ]]; then
+        echo "Skipping already-wrapped file $f"
+        continue
+      fi
+      echo "Processing $f"
+      fname=$(basename "$f")
+      # use a per-file wrapped prefix so the helper wraps and loads only this file
+      wrapped_prefix="${PREFIX}/${fname%.ndjson}_wrapped"
+      bash "$(dirname "$0")/wrap_and_load_raw_json.sh" --bucket "$BUCKET" --prefix "$PREFIX" --wrapped-prefix "$wrapped_prefix" --project "$PROJECT" --location "$LOCATION"
+    done
   fi
 
-  echo "Load submitted — check BigQuery job output for errors if any."
+  echo "All per-file loads submitted — check BigQuery job outputs for errors if any."
 fi
 
 echo "4) Materialize patients table from staging"
