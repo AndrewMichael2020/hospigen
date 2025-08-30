@@ -92,23 +92,52 @@ else
   echo "All per-file loads submitted — check BigQuery job outputs for errors if any."
 fi
 
-echo "4) Materialize patients table from staging"
+echo "4) Materialize patients table from staging (upsert/merge into ${PROJECT}.${DATASET}.patients)"
+
+# Ensure patients table exists with required schema (patient_id STRING unique key, raw JSON, ingestion_ts, generated_ts)
+if ! bq --location="$LOCATION" show "${PROJECT}:${DATASET}.patients" >/dev/null 2>&1; then
+  echo "Creating table ${PROJECT}.${DATASET}.patients..."
+  bq --location="$LOCATION" mk --table "${PROJECT}:${DATASET}.patients" \
+    patient_id:STRING,raw:JSON,ingestion_ts:TIMESTAMP,generated_ts:TIMESTAMP
+fi
+# Ensure the table has ingestion_ts and generated_ts columns (add if missing). Use SQL ALTER TABLE and ignore errors.
+echo "Ensuring patients table has ingestion_ts and generated_ts columns (idempotent)"
+# Ensure ingestion_ts column exists
+bq --location="$LOCATION" --project_id="$PROJECT" query --use_legacy_sql=false "ALTER TABLE ${PROJECT}.${DATASET}.patients ADD COLUMN IF NOT EXISTS ingestion_ts TIMESTAMP;" || true
+# Ensure generated_ts column exists
+bq --location="$LOCATION" --project_id="$PROJECT" query --use_legacy_sql=false "ALTER TABLE ${PROJECT}.${DATASET}.patients ADD COLUMN IF NOT EXISTS generated_ts TIMESTAMP;" || true
+
 cat <<SQL > /tmp/materialize_patients.sql
-CREATE OR REPLACE TABLE ${PROJECT}.${DATASET}.patients AS
-SELECT
-  COALESCE(JSON_EXTRACT_SCALAR(raw, '$.id'), JSON_EXTRACT_SCALAR(raw, '$.raw.id')) AS patient_id,
-  COALESCE(JSON_EXTRACT_SCALAR(raw, '$.gender'), JSON_EXTRACT_SCALAR(raw, '$.raw.gender')) AS gender,
-  COALESCE(JSON_EXTRACT_SCALAR(raw, '$.birthDate'), JSON_EXTRACT_SCALAR(raw, '$.raw.birthDate')) AS birth_date,
-  COALESCE(JSON_EXTRACT_SCALAR(raw, '$.name[0].family'), JSON_EXTRACT_SCALAR(raw, '$.raw.name[0].family')) AS family_name,
-  COALESCE(JSON_EXTRACT_SCALAR(raw, '$.address[0].city'), JSON_EXTRACT_SCALAR(raw, '$.raw.address[0].city')) AS city,
-  raw AS raw
-FROM ${PROJECT}.${DATASET}.raw_records_stg
-WHERE COALESCE(JSON_EXTRACT_SCALAR(raw, '$.resourceType'), JSON_EXTRACT_SCALAR(raw, '$.raw.resourceType')) = 'Patient';
+# Merge (upsert) patient records from staging into patients table.
+# Use GROUP BY + ANY_VALUE to ensure at most one source row per patient_id
+MERGE ${PROJECT}.${DATASET}.patients T
+USING (
+  SELECT
+    patient_id,
+    ANY_VALUE(raw) AS raw,
+    ANY_VALUE(generated_ts) AS generated_ts,
+    CURRENT_TIMESTAMP() AS ingestion_ts
+  FROM (
+    SELECT
+      COALESCE(JSON_EXTRACT_SCALAR(raw, '$.id'), JSON_EXTRACT_SCALAR(raw, '$.raw.id')) AS patient_id,
+      raw,
+    SAFE_CAST(COALESCE(JSON_EXTRACT_SCALAR(raw, '$.meta.generated'), JSON_EXTRACT_SCALAR(raw, '$.raw.meta.generated')) AS TIMESTAMP) AS generated_ts
+    FROM ${PROJECT}.${DATASET}.raw_records_stg
+    WHERE COALESCE(JSON_EXTRACT_SCALAR(raw, '$.resourceType'), JSON_EXTRACT_SCALAR(raw, '$.raw.resourceType')) = 'Patient'
+  )
+  GROUP BY patient_id
+) S
+ON T.patient_id = S.patient_id
+WHEN MATCHED THEN
+  UPDATE SET raw = S.raw, ingestion_ts = S.ingestion_ts, generated_ts = S.generated_ts
+WHEN NOT MATCHED THEN
+  INSERT (patient_id, raw, ingestion_ts, generated_ts)
+  VALUES (S.patient_id, S.raw, S.ingestion_ts, S.generated_ts);
 SQL
 
 bq --project_id="$PROJECT" --location="$LOCATION" query --use_legacy_sql=false < /tmp/materialize_patients.sql
 rm -f /tmp/materialize_patients.sql
 
-echo "Materialized table: ${PROJECT}.${DATASET}.patients"
+echo "Materialized (merged) table: ${PROJECT}.${DATASET}.patients"
 
 echo "Done."

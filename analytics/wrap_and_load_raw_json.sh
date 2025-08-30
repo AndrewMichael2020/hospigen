@@ -55,8 +55,9 @@ for f in "$TMPDIR"/*.ndjson; do
   gsutil -q cp "$wrapped" "gs://$BUCKET/$WRAPPED_PREFIX/"
 done
 
-echo "Loading wrapped NDJSON into BigQuery staging table ${PROJECT}:synthea_raw.raw_records_stg"
-bq --location="$LOCATION" load --source_format=NEWLINE_DELIMITED_JSON --replace "${PROJECT}:synthea_raw.raw_records_stg" "gs://$BUCKET/$WRAPPED_PREFIX/*.ndjson" raw:JSON
+echo "Loading wrapped NDJSON into BigQuery staging table ${PROJECT}:synthea_raw.raw_records_stg (append)"
+# Use append mode so staging accumulates files instead of replacing
+bq --location="$LOCATION" load --source_format=NEWLINE_DELIMITED_JSON "${PROJECT}:synthea_raw.raw_records_stg" "gs://$BUCKET/$WRAPPED_PREFIX/*.ndjson" raw:JSON || true
 
 echo "Cleaning temporary files"
 rm -rf "$TMPDIR"

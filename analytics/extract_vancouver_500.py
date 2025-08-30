@@ -24,6 +24,7 @@ import sys
 import time
 from pathlib import Path
 from typing import Optional
+from datetime import datetime
 
 ROOT = Path(__file__).resolve().parents[1]
 SYN_ORIG = ROOT / "synthea_original"
@@ -116,6 +117,16 @@ def modify_and_copy(
                 res = entry.get("resource")
                 if not res:
                     continue
+                # attach a generated timestamp to each resource if not present
+                try:
+                    gen_ts = datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+                    if isinstance(res, dict):
+                        res.setdefault("meta", {})
+                        if "generated" not in res.get("meta", {}):
+                            res["meta"]["generated"] = gen_ts
+                except Exception:
+                    # never fail generation because of metadata writing
+                    pass
                 if "address" in res:
                     if isinstance(res["address"], list):
                         for addr in res["address"]:
