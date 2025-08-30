@@ -1,0 +1,22 @@
+Moved files from analytics root and scripts to archive per user request on 2025-08-29.
+Contents archived; original files removed from their original locations.
+Moved files from analytics/ into archive/ on 2025-08-29 to preserve history while keeping the pipeline tidy.
+
+Kept files:
+- analytics/scripts/extract_vancouver_500.py
+- analytics/bq/wrap_and_load_raw_json.sh
+- analytics/bq/stage_and_materialize_patients.sh
+- analytics/full_staging_pipeline.sh
+
+Files archived:
+-- generate_ingest_bq.md
+-- test_extract_vancouver_500.py
+-- test_output_500/vancouver_generation_summary.json
+-- scripts/extract_resources.py
+-- scripts/generate_and_upload_bq_bc.py
+-- scripts/generate_500_and_upload.sh
+-- scripts/run_generate_and_stage.sh
+-- scripts/validate_ndjson.py
+-- extract_vancouver_500.py
+-- VANCOUVER_DATASET_history_try.md
+-- cloud_functions/*

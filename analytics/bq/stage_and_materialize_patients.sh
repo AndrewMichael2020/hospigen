@@ -33,6 +33,7 @@ while [[ $# -gt 0 ]]; do
     --project) PROJECT="$2"; shift 2;;
     --dataset) DATASET="$2"; shift 2;;
     --location) LOCATION="$2"; shift 2;;
+  --skip-load) SKIP_LOAD=true; shift 1;;
     --mode) MODE="$2"; shift 2;;
     -h|--help) usage; exit 0;;
     *) echo "Unknown arg: $1" >&2; usage; exit 1;;
@@ -42,6 +43,8 @@ done
 if [[ -z "$BUCKET" || -z "$PREFIX" ]]; then
   usage; exit 2
 fi
+
+SKIP_LOAD=${SKIP_LOAD:-false}
 
 GLOB="gs://${BUCKET}/${PREFIX}/*.ndjson"
 DS="${PROJECT}.${DATASET}"
@@ -62,16 +65,20 @@ fi
 echo "Quick tip: to inspect one uploaded file, run locally:"
 echo "  gsutil cat ${GLOB} | head -n1"
 
-echo "3) Loading NDJSON files from ${GLOB} into ${DS}.raw_records_stg (mode=${MODE})"
-if [[ "$MODE" == "replace" ]]; then
-  echo "Running bq load --replace ..."
-  bq --location="$LOCATION" load --source_format=NEWLINE_DELIMITED_JSON --replace "${FULL_DS}.raw_records_stg" "$GLOB" raw:JSON
+if [[ "$SKIP_LOAD" == "true" ]]; then
+  echo "SKIP_LOAD set: skipping bq load phase. Assuming staging table already contains files from gs://$BUCKET/$PREFIX"
 else
-  echo "Running bq load (append) ..."
-  bq --location="$LOCATION" load --source_format=NEWLINE_DELIMITED_JSON "${FULL_DS}.raw_records_stg" "$GLOB" raw:JSON
-fi
+  echo "3) Loading NDJSON files from ${GLOB} into ${DS}.raw_records_stg (mode=${MODE})"
+  if [[ "$MODE" == "replace" ]]; then
+    echo "Running bq load --replace ..."
+    bq --location="$LOCATION" load --source_format=NEWLINE_DELIMITED_JSON --replace "${FULL_DS}.raw_records_stg" "$GLOB" raw:JSON
+  else
+    echo "Running bq load (append) ..."
+    bq --location="$LOCATION" load --source_format=NEWLINE_DELIMITED_JSON "${FULL_DS}.raw_records_stg" "$GLOB" raw:JSON
+  fi
 
-echo "Load submitted — check BigQuery job output for errors if any."
+  echo "Load submitted — check BigQuery job output for errors if any."
+fi
 
 echo "4) Materialize patients table from staging"
 cat <<SQL > /tmp/materialize_patients.sql
