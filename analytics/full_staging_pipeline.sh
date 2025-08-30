@@ -28,7 +28,7 @@ echo "Step 1/3: Generate $TOTAL patients and upload to gs://$BUCKET/$PREFIX"
 if [[ "$DRY_RUN" == "true" ]]; then
   echo "DRY RUN: would run generator: python3 analytics/scripts/extract_vancouver_500.py --total $TOTAL --batch-size $BATCH_SIZE --upload --gcs-bucket $BUCKET --gcs-prefix $PREFIX"
 else
-  python3 analytics/scripts/extract_vancouver_500.py --total "$TOTAL" --batch-size "$BATCH_SIZE" --upload --gcs-bucket "$BUCKET" --gcs-prefix "$PREFIX"
+  python3 analytics/extract_vancouver_500.py --total "$TOTAL" --batch-size "$BATCH_SIZE" --upload --gcs-bucket "$BUCKET" --gcs-prefix "$PREFIX"
 fi
 
 echo "Step 2/3: Wrap NDJSON and load into staging"
