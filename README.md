@@ -1,5 +1,12 @@
 ## Hospigen — Canadian healthcare synthetic data & analytics
 
+![Synthetic Data](https://img.shields.io/badge/data-synthetic%20healthcare-0f766e)
+![FHIR](https://img.shields.io/badge/standard-FHIR-E34F26)
+![Google Cloud](https://img.shields.io/badge/platform-Google%20Cloud-4285F4?logo=googlecloud&logoColor=white)
+![BigQuery](https://img.shields.io/badge/analytics-BigQuery-669DF6?logo=googlebigquery&logoColor=white)
+![FastAPI](https://img.shields.io/badge/API-FastAPI-009688?logo=fastapi&logoColor=white)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
+
 This repository contains a small, opinionated toolset for generating synthetic Canadian healthcare data (via Synthea), publishing it into a Google Cloud FHIR Store, and turning those clinical events into analytics-ready BigQuery tables for dashboards and ML.
 
 Two primary entry points:
